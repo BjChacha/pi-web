@@ -155,15 +155,17 @@ async function isUntracked(cwd: string, path: string): Promise<boolean> {
 
 /** Configured direct-submodule paths (depth 1), read from `.gitmodules`. */
 async function submodulePaths(cwd: string): Promise<string[]> {
-  const result = await runGit(cwd, ["config", "--file", ".gitmodules", "--get-regexp", "^submodule\\..+\\.path$"]);
+  // `-z` emits `<key>\n<value>\0` records; keys may themselves contain spaces
+  // (`submodule.my sub.path`), so splitting lines at the first space mangles
+  // paths with spaces in them.
+  const result = await runGit(cwd, ["config", "-z", "--file", ".gitmodules", "--get-regexp", "^submodule\\..+\\.path$"]);
   if (result.code !== 0) return [];
   const paths: string[] = [];
-  for (const line of result.stdout.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed === "") continue;
-    const spaceAt = trimmed.indexOf(" ");
-    if (spaceAt === -1) continue;
-    paths.push(trimmed.slice(spaceAt + 1));
+  for (const record of result.stdout.split("\0")) {
+    if (record === "") continue;
+    const newlineAt = record.indexOf("\n");
+    if (newlineAt === -1) continue;
+    paths.push(record.slice(newlineAt + 1));
   }
   return paths;
 }
@@ -201,19 +203,28 @@ function parseStatus(raw: string, options: { deferSubmodules: boolean }): Parsed
       const parts = record.split(" ");
       const sub = parts[2];
       const path = parts.slice(8).join(" ");
-      if (options.deferSubmodules && sub?.startsWith("S") === true) {
+      const index = stateFor(parts[1]?.[0]);
+      const workingTree = stateFor(parts[1]?.[1]);
+      // A deleted gitlink has no pointer move or inner content to expand (a
+      // staged deletion even reports the index OID as all zeros), so keep it
+      // as a plain row instead of deferring it as a submodule.
+      if (options.deferSubmodules && sub?.startsWith("S") === true && index !== "deleted" && workingTree !== "deleted") {
+        const headOid = parts[6] ?? "";
+        const indexOid = parts[7] ?? "";
         submodules.push({
           path,
-          index: stateFor(parts[1]?.[0]),
-          workingTree: stateFor(parts[1]?.[1]),
-          commitChanged: sub[1] === "C",
+          index,
+          workingTree,
+          // `c` only flags unstaged moves (submodule HEAD left the index OID);
+          // a staged move leaves HEAD == index, so compare the recorded OIDs.
+          commitChanged: sub[1] === "C" || headOid !== indexOid,
           hasModifiedContent: sub[2] === "M",
           hasUntrackedContent: sub[3] === "U",
-          headOid: parts[6] ?? "",
-          indexOid: parts[7] ?? "",
+          headOid,
+          indexOid,
         });
       } else {
-        files.push({ path, index: stateFor(parts[1]?.[0]), workingTree: stateFor(parts[1]?.[1]) });
+        files.push({ path, index, workingTree });
       }
     } else if (record.startsWith("2 ")) {
       const parts = record.split(" ");
