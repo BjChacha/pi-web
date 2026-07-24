@@ -64,8 +64,8 @@ export class WorkspaceGitPanel extends LitElement {
         <strong>Git</strong>
         ${context.gitStale ? html`<span class="stale">stale</span>` : null}
         <div class="toolbar-actions">
-          ${this.renderViewToggle()}
           ${viewState.expandablePaths.length > 0 ? this.renderExpandCollapseAll(viewState.expandablePaths) : null}
+          ${this.renderViewToggle()}
           <button type="button" @click=${context.onRefreshGit}>Refresh</button>
         </div>
       </section>
