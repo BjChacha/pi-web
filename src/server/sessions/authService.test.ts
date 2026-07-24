@@ -362,7 +362,7 @@ describe("AuthService", () => {
 
   it("stores credentials in the configured agent directory", async () => {
     const agentDir = await tempAgentDir();
-    const runtime = await createModelRuntimeForAgentDir(agentDir, false);
+    const runtime = await createModelRuntimeForAgentDir(agentDir);
     const auth = await AuthService.create({ runtime });
 
     await auth.saveApiKey("anthropic", "sk-test");
@@ -470,6 +470,39 @@ describe("AuthService", () => {
   });
 });
 
+describe("createModelRuntimeForAgentDir", () => {
+  it("disables runtime-owned network refreshes so request paths stay local", async () => {
+    // The stall fix relies on this construction-time flag: reloadConfig(),
+    // login(), and logout() refresh with allowNetwork = modelNetworkEnabled.
+    // Asserting the private field is proportionate here because the flag is
+    // exactly the contract this change depends on.
+    const agentDir = await tempAgentDir();
+    const runtime = await createModelRuntimeForAgentDir(agentDir);
+    expect(Reflect.get(runtime, "modelNetworkEnabled")).toBe(false);
+  });
+
+  it("restores a previously set PI_OFFLINE after runtime creation", async () => {
+    // The file-level beforeEach stubs PI_OFFLINE=1.
+    const agentDir = await tempAgentDir();
+    await createModelRuntimeForAgentDir(agentDir);
+    expect(process.env["PI_OFFLINE"]).toBe("1");
+  });
+
+  it("restores a previously unset PI_OFFLINE after runtime creation", async () => {
+    vi.unstubAllEnvs();
+    const previous = process.env["PI_OFFLINE"];
+    delete process.env["PI_OFFLINE"];
+    try {
+      const agentDir = await tempAgentDir();
+      const runtime = await createModelRuntimeForAgentDir(agentDir);
+      expect(Reflect.get(runtime, "modelNetworkEnabled")).toBe(false);
+      expect(process.env["PI_OFFLINE"]).toBeUndefined();
+    } finally {
+      if (previous !== undefined) process.env["PI_OFFLINE"] = previous;
+    }
+  });
+});
+
 async function createAuthService(seed: Record<string, Credential> = {}, logger?: AuthServiceLogger) {
   const credentials = new InMemoryCredentialStore();
   for (const [providerId, credential] of Object.entries(seed)) {
@@ -486,7 +519,7 @@ async function createFileBackedAuthService(seed: Record<string, Credential>) {
   const agentDir = await tempAgentDir();
   const authPath = join(agentDir, "auth.json");
   await writeFile(authPath, JSON.stringify(seed, null, 2));
-  const runtime = await createModelRuntimeForAgentDir(agentDir, false);
+  const runtime = await createModelRuntimeForAgentDir(agentDir);
   const auth = await AuthService.create({ runtime });
   const changes: AuthChange[] = [];
   auth.subscribe((change) => { changes.push(change); });

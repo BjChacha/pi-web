@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { ModelRuntime, type CreateModelRuntimeOptions } from "@earendil-works/pi-coding-agent";
 import type { AuthInteraction } from "@earendil-works/pi-ai";
 import type { AuthProvidersResponse, AuthType, OAuthFlowState } from "../../shared/apiTypes.js";
 import { getLoginProviderOptions, getLogoutProviderOptions } from "./authProviderOptions.js";
@@ -31,11 +31,33 @@ interface AuthChangeContext {
 
 const noopLogger: AuthServiceLogger = { error() { /* no-op */ } };
 
-export function createModelRuntimeForAgentDir(agentDir: string, allowModelNetwork?: boolean): Promise<ModelRuntime> {
-  return ModelRuntime.create({
+/**
+ * Create the shared model runtime with runtime-owned network refreshes disabled.
+ *
+ * Upstream `ModelRuntime.reloadConfig()`, `login()`, and `logout()` always refresh
+ * with `allowNetwork: modelNetworkEnabled` and accept no abort signal. With the
+ * default (`PI_OFFLINE` unset) a single stalled provider-catalog fetch can block
+ * those call paths for minutes — and, because pi-web shares one runtime and pi
+ * coalesces per-provider refreshes, session creation joins the same stalled
+ * fetch. Forcing `PI_OFFLINE` during construction makes every runtime-driven
+ * refresh local-only; pi-web performs its own bounded catalog refreshes in the
+ * background instead (see modelCatalogRefresher.ts).
+ */
+async function createOfflineModelRuntime(options: CreateModelRuntimeOptions): Promise<ModelRuntime> {
+  const previous = process.env["PI_OFFLINE"];
+  process.env["PI_OFFLINE"] = "1";
+  try {
+    return await ModelRuntime.create(options);
+  } finally {
+    if (previous === undefined) delete process.env["PI_OFFLINE"];
+    else process.env["PI_OFFLINE"] = previous;
+  }
+}
+
+export function createModelRuntimeForAgentDir(agentDir: string): Promise<ModelRuntime> {
+  return createOfflineModelRuntime({
     authPath: join(agentDir, "auth.json"),
     modelsPath: join(agentDir, "models.json"),
-    ...(allowModelNetwork === undefined ? {} : { allowModelNetwork }),
   });
 }
 
@@ -52,7 +74,7 @@ export class AuthService {
   }
 
   static async create(deps: AuthServiceDependencies = {}): Promise<AuthService> {
-    const runtime = deps.runtime ?? (deps.agentDir === undefined ? await ModelRuntime.create({}) : await createModelRuntimeForAgentDir(deps.agentDir));
+    const runtime = deps.runtime ?? (deps.agentDir === undefined ? await createOfflineModelRuntime({}) : await createModelRuntimeForAgentDir(deps.agentDir));
     const logger = deps.logger ?? noopLogger;
     const authFlows = deps.authFlows ?? new OAuthLoginFlowService({ logger });
     return new AuthService(runtime, authFlows, logger);
