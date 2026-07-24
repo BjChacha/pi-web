@@ -151,6 +151,18 @@ describe("gitStatus with submodules", () => {
     expect(status.submodules).not.toContain("HARL");
   });
 
+  it("renders a newly staged submodule pointer as new → <sha> (zero head OID)", async () => {
+    const { dir, c2 } = createFixture();
+    git(dir, ["submodule", "add", join(dir, "..", "origin"), "NEWSUB"]); // staged add: `1 A. S...` with a zero head OID
+
+    const status = await gitStatus(dir);
+    const pointer = status.files.find((file) => file.path === "NEWSUB");
+    expect(pointer?.index).toBe("added");
+    expect(pointer?.submoduleFromCommit).toBe("new");
+    expect(pointer?.submoduleToCommit).toBe(c2.slice(0, 7));
+    expect(status.submodules).toContain("NEWSUB");
+  });
+
   it("prefixes oldPath with the submodule path for renames inside a submodule", async () => {
     const { dir } = createFixture();
     git(join(dir, "HARL"), ["mv", "a.txt", "renamed.txt"]);

@@ -85,7 +85,7 @@ async function expandSubmodule(cwd: string, sub: SubmoduleRecord): Promise<{ fil
       path: sub.path,
       index: sub.index,
       workingTree: sub.workingTree,
-      submoduleFromCommit: short(sub.headOid),
+      submoduleFromCommit: displayFromCommit(sub.headOid),
       submoduleToCommit: short(await resolveSubmoduleToCommit(cwd, sub)),
     });
   }
@@ -282,6 +282,11 @@ function normalizeBranch(value: string): string | undefined {
 
 function short(oid: string): string {
   return oid.slice(0, 7);
+}
+
+/** A newly staged submodule records an all-zero head OID; display the pointer as `new → <sha>`. */
+function displayFromCommit(headOid: string): string {
+  return /^0+$/.test(headOid) ? "new" : short(headOid);
 }
 
 function hash(value: string): string {
