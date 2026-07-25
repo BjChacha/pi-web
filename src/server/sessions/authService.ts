@@ -42,12 +42,12 @@ let offlineRuntimeCreations: Promise<unknown> = Promise.resolve();
 /**
  * Create the shared model runtime with runtime-owned network refreshes disabled.
  *
- * Upstream `ModelRuntime.reloadConfig()`, `login()`, and `logout()` always refresh
- * with `allowNetwork: modelNetworkEnabled` and accept no abort signal. With the
- * default (`PI_OFFLINE` unset) a single stalled provider-catalog fetch can block
- * those call paths for minutes — and, because pi-web shares one runtime and pi
- * coalesces per-provider refreshes, session creation joins the same stalled
- * fetch. Forcing `PI_OFFLINE` during construction makes every runtime-driven
+ * Upstream `ModelRuntime.refresh()`, `login()`, and `logout()` always refresh
+ * with `allowNetwork: modelNetworkEnabled` by default, and `login()`/`logout()`
+ * accept no abort signal. With the default (`PI_OFFLINE` unset) a single stalled
+ * provider-catalog fetch can block those call paths for minutes — and, because
+ * pi-web shares one runtime and pi coalesces per-provider refreshes, session
+ * creation joins the same stalled fetch. Forcing `PI_OFFLINE` during construction makes every runtime-driven
  * refresh local-only; pi-web performs its own bounded catalog refreshes in the
  * background instead (see modelCatalogRefresher.ts).
  *
@@ -122,7 +122,7 @@ export class AuthService {
   }
 
   async authProviders(mode: "login" | "logout", authType?: AuthType): Promise<AuthProvidersResponse> {
-    await this.runtime.reloadConfig();
+    await this.runtime.refresh();
     const providers = mode === "logout" ? await getLogoutProviderOptions(this.runtime) : getLoginProviderOptions(this.runtime, authType);
     return { providers };
   }
@@ -208,7 +208,7 @@ export class AuthService {
   }
 
   private async requireApiKeyLoginProvider(providerId: string) {
-    await this.runtime.reloadConfig();
+    await this.runtime.refresh();
     const provider = getLoginProviderOptions(this.runtime, "api_key").find((option) => option.id === providerId);
     if (provider !== undefined) return provider;
 
@@ -220,7 +220,7 @@ export class AuthService {
   }
 
   private async requireOAuthLoginProvider(providerId: string) {
-    await this.runtime.reloadConfig();
+    await this.runtime.refresh();
     const provider = getLoginProviderOptions(this.runtime, "oauth").find((option) => option.id === providerId);
     if (provider === undefined) throw new Error(`OAuth provider not found: ${providerId}`);
     return provider;
