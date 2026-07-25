@@ -228,7 +228,7 @@ The session daemon runs the refresh:
 - **15 seconds after the daemon starts**, then **hourly**. Pi treats stored catalogs as fresh for four hours, so most hourly ticks make no network request at all; the shorter tick only makes sure a due refresh is not delayed to the next tick.
 - **Immediately after a provider login or logout**, bypassing that freshness window, because the cached catalog is known to be wrong.
 
-Each run is bounded: it is aborted after **60 seconds**, and a run that times out or fails earns **one retry after five minutes**. Failures never clear the stored catalogs — the last successfully fetched models stay in use and the daemon log records what failed. A refresh in flight is also aborted when the daemon shuts down.
+Each run is bounded: it is aborted after **60 seconds**, and a run that times out or cannot reach a provider earns **one retry after five minutes**; a provider that answers with an error status is retried on the next scheduled refresh instead. Failures never clear the stored catalogs — the last successfully fetched models stay in use and the daemon log records what failed. A refresh in flight is also aborted when the daemon shuts down.
 
 Models fetched by a background refresh appear the next time a client asks for the model list, so a model selector left open across a refresh may need to be reopened.
 
