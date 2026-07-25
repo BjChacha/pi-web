@@ -362,7 +362,7 @@ describe("AuthService", () => {
 
   it("stores credentials in the configured agent directory", async () => {
     const agentDir = await tempAgentDir();
-    const runtime = await createModelRuntimeForAgentDir(agentDir, false);
+    const runtime = await createModelRuntimeForAgentDir(agentDir);
     const auth = await AuthService.create({ runtime });
 
     await auth.saveApiKey("anthropic", "sk-test");
@@ -470,6 +470,68 @@ describe("AuthService", () => {
   });
 });
 
+describe("createModelRuntimeForAgentDir", () => {
+  it("keeps runtime-owned refreshes local so request paths cannot stall", async () => {
+    // reloadConfig() is the request-path call site that regressed: it refreshes
+    // with allowNetwork = the construction-time network flag and no abort signal.
+    // The ambient PI_OFFLINE=1 stub has to go, or the runtime would be offline
+    // whether or not the helper forces it and this would assert nothing.
+    vi.stubEnv("PI_OFFLINE", undefined);
+    const agentDir = await tempAgentDir();
+    const runtime = await createModelRuntimeForAgentDir(agentDir);
+    const refresh = vi.spyOn(runtime, "refresh");
+
+    await runtime.reloadConfig();
+
+    expect(refresh).toHaveBeenCalledWith({ allowNetwork: false });
+  });
+
+  it("restores a previously set PI_OFFLINE after runtime creation", async () => {
+    // The file-level beforeEach stubs PI_OFFLINE=1.
+    const agentDir = await tempAgentDir();
+    await createModelRuntimeForAgentDir(agentDir);
+    expect(process.env["PI_OFFLINE"]).toBe("1");
+  });
+
+  it("restores a previously unset PI_OFFLINE after runtime creation", async () => {
+    vi.unstubAllEnvs();
+    const previous = process.env["PI_OFFLINE"];
+    delete process.env["PI_OFFLINE"];
+    try {
+      const agentDir = await tempAgentDir();
+      const runtime = await createModelRuntimeForAgentDir(agentDir);
+      const refresh = vi.spyOn(runtime, "refresh");
+
+      await runtime.reloadConfig();
+
+      expect(refresh).toHaveBeenCalledWith({ allowNetwork: false });
+      expect(process.env["PI_OFFLINE"]).toBeUndefined();
+    } finally {
+      if (previous !== undefined) process.env["PI_OFFLINE"] = previous;
+    }
+  });
+
+  it("restores PI_OFFLINE when creations overlap, because the env windows are serialized", async () => {
+    vi.unstubAllEnvs();
+    const previous = process.env["PI_OFFLINE"];
+    delete process.env["PI_OFFLINE"];
+    try {
+      const dirs = await Promise.all([tempAgentDir(), tempAgentDir(), tempAgentDir()]);
+      const runtimes = await Promise.all(dirs.map((dir) => createModelRuntimeForAgentDir(dir)));
+
+      // Interleaved save/restore pairs would leave PI_OFFLINE set process-wide.
+      expect(process.env["PI_OFFLINE"]).toBeUndefined();
+      for (const runtime of runtimes) {
+        const refresh = vi.spyOn(runtime, "refresh");
+        await runtime.reloadConfig();
+        expect(refresh).toHaveBeenCalledWith({ allowNetwork: false });
+      }
+    } finally {
+      if (previous !== undefined) process.env["PI_OFFLINE"] = previous;
+    }
+  });
+});
+
 async function createAuthService(seed: Record<string, Credential> = {}, logger?: AuthServiceLogger) {
   const credentials = new InMemoryCredentialStore();
   for (const [providerId, credential] of Object.entries(seed)) {
@@ -486,7 +548,7 @@ async function createFileBackedAuthService(seed: Record<string, Credential>) {
   const agentDir = await tempAgentDir();
   const authPath = join(agentDir, "auth.json");
   await writeFile(authPath, JSON.stringify(seed, null, 2));
-  const runtime = await createModelRuntimeForAgentDir(agentDir, false);
+  const runtime = await createModelRuntimeForAgentDir(agentDir);
   const auth = await AuthService.create({ runtime });
   const changes: AuthChange[] = [];
   auth.subscribe((change) => { changes.push(change); });
