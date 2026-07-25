@@ -10,8 +10,9 @@ const DEFAULT_INITIAL_DELAY_MS = 15_000;
 /** Bound every catalog refresh so a stalled provider fetch can never block for minutes. */
 const DEFAULT_TIMEOUT_MS = 15_000;
 
-/** Minimal structured-logging seam for non-fatal refresh failures. */
+/** Minimal structured-logging seam for refresh lifecycle and non-fatal failures. */
 export interface ModelCatalogRefresherLogger {
+  info(details: Record<string, unknown>, message: string): void;
   warn(details: Record<string, unknown>, message: string): void;
   error(details: Record<string, unknown>, message: string): void;
 }
@@ -19,12 +20,19 @@ export interface ModelCatalogRefresherLogger {
 export interface ModelCatalogRefresherOptions {
   runtime: Pick<ModelRuntime, "refresh">;
   logger?: ModelCatalogRefresherLogger;
+  /**
+   * When true the operator asked for offline behavior, so no network refresh is
+   * ever attempted. Injected from the daemon environment instead of read from
+   * `process.env` here, so the decision stays explicit and testable.
+   */
+  offline?: boolean;
   intervalMs?: number;
   initialDelayMs?: number;
   timeoutMs?: number;
 }
 
 const noopLogger: ModelCatalogRefresherLogger = {
+  info() { /* no-op */ },
   warn() { /* no-op */ },
   error() { /* no-op */ },
 };
@@ -38,10 +46,15 @@ const noopLogger: ModelCatalogRefresherLogger = {
  * bounded by an abort timeout, serialized through one in-flight run, and off
  * any request path. `requestRefresh()` additionally asks for a prompt refresh
  * after events that change what should be listed, such as provider logins.
+ *
+ * When the operator asked for offline behavior (`PI_OFFLINE` / `PI_WEB_OFFLINE`),
+ * the refresher performs no network I/O at all and the cached catalogs in
+ * models-store.json are used as they are.
  */
 export class ModelCatalogRefresher {
   private readonly runtime: Pick<ModelRuntime, "refresh">;
   private readonly logger: ModelCatalogRefresherLogger;
+  private readonly offline: boolean;
   private readonly intervalMs: number;
   private readonly initialDelayMs: number;
   private readonly timeoutMs: number;
@@ -54,6 +67,7 @@ export class ModelCatalogRefresher {
   constructor(options: ModelCatalogRefresherOptions) {
     this.runtime = options.runtime;
     this.logger = options.logger ?? noopLogger;
+    this.offline = options.offline ?? false;
     this.intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS;
     this.initialDelayMs = options.initialDelayMs ?? DEFAULT_INITIAL_DELAY_MS;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -61,15 +75,22 @@ export class ModelCatalogRefresher {
 
   start(): void {
     if (this.disposed) return;
+    if (this.offline) {
+      this.logger.info({}, "offline mode is enabled; skipping background model catalog refreshes");
+      return;
+    }
     this.initialTimer = setTimeout(() => { this.requestRefresh(); }, this.initialDelayMs);
     this.initialTimer.unref();
     this.intervalTimer = setInterval(() => { this.requestRefresh(); }, this.intervalMs);
     this.intervalTimer.unref();
   }
 
-  /** Ask for a refresh, coalescing concurrent and overlapping requests. */
+  /**
+   * Ask for a refresh, coalescing concurrent and overlapping requests. A no-op
+   * in offline mode, so auth changes never trigger network I/O either.
+   */
   requestRefresh(): void {
-    if (this.disposed) return;
+    if (this.disposed || this.offline) return;
     if (this.inflight !== undefined) {
       this.queued = true;
       return;

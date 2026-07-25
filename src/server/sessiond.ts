@@ -24,7 +24,7 @@ import { TerminalService } from "./terminals/terminalService.js";
 import { registerTerminalRoutes } from "./terminals/terminalRoutes.js";
 import { getPiWebRuntimeComponent } from "./piWebStatus.js";
 import { SESSIOND_RUNTIME_CAPABILITIES } from "../shared/capabilities.js";
-import { agentSessionDirEnvKeys, effectivePiWebConfig, maxUploadBytes } from "../config.js";
+import { agentSessionDirEnvKeys, effectivePiWebConfig, maxUploadBytes, offlineModeEnabled } from "../config.js";
 import { createActiveAgentProfileDescriptor } from "../sessiond/activeAgentProfile.js";
 import { runSessionDaemonStartup } from "./sessiond/sessionDaemonStartup.js";
 
@@ -58,8 +58,13 @@ await runSessionDaemonStartup({
     await bootstrapAndFreezeGlobalExtensionProviders(auth.runtime, activeAgentProfile.dir, app.log);
     // The shared model runtime is constructed offline so request paths never
     // wait on provider-catalog fetches; this is the single bounded network
-    // refresher, and auth changes (login/logout) ask it for a prompt run.
-    const catalogRefresher = new ModelCatalogRefresher({ runtime: auth.runtime, logger: app.log });
+    // refresher, and auth changes (login/logout) ask it for a prompt run. It
+    // stays fully inert when the operator asked for offline behavior.
+    const catalogRefresher = new ModelCatalogRefresher({
+      runtime: auth.runtime,
+      logger: app.log,
+      offline: offlineModeEnabled(daemonEnvironment),
+    });
     catalogRefresher.start();
     auth.subscribe(() => { catalogRefresher.requestRefresh(); });
     const spawnTargets = config.spawnSessions

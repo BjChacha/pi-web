@@ -31,9 +31,10 @@ function createRuntime() {
 }
 
 function createLogger() {
+  const info = vi.fn();
   const warn = vi.fn();
   const error = vi.fn();
-  return { logger: { warn, error }, warn, error };
+  return { logger: { info, warn, error }, info, warn, error };
 }
 
 /** Let a started refresh run to completion, including the finally-queue bookkeeping. */
@@ -121,6 +122,21 @@ describe("ModelCatalogRefresher", () => {
     await flushMicrotasks();
 
     expect(refresh).toHaveBeenCalledOnce();
+  });
+
+  it("never touches the network when offline mode is enabled", async () => {
+    const runtime = createRuntime();
+    const { logger, info } = createLogger();
+    const refresher = new ModelCatalogRefresher({ runtime, logger, offline: true, initialDelayMs: 1_000, intervalMs: 60_000 });
+
+    refresher.start();
+    await vi.advanceTimersByTimeAsync(300_000);
+    refresher.requestRefresh();
+    await flushMicrotasks();
+
+    expect(runtime.refresh).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalledWith({}, "offline mode is enabled; skipping background model catalog refreshes");
+    refresher.dispose();
   });
 
   it("warns and keeps going when a refresh is aborted by its timeout", async () => {
