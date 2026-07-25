@@ -471,14 +471,16 @@ describe("AuthService", () => {
 });
 
 describe("createModelRuntimeForAgentDir", () => {
-  it("disables runtime-owned network refreshes so request paths stay local", async () => {
-    // The stall fix relies on this construction-time flag: reloadConfig(),
-    // login(), and logout() refresh with allowNetwork = modelNetworkEnabled.
-    // Asserting the private field is proportionate here because the flag is
-    // exactly the contract this change depends on.
+  it("keeps runtime-owned refreshes local so request paths cannot stall", async () => {
+    // reloadConfig() is the request-path call site that regressed: it refreshes
+    // with allowNetwork = the construction-time network flag and no abort signal.
     const agentDir = await tempAgentDir();
     const runtime = await createModelRuntimeForAgentDir(agentDir);
-    expect(Reflect.get(runtime, "modelNetworkEnabled")).toBe(false);
+    const refresh = vi.spyOn(runtime, "refresh");
+
+    await runtime.reloadConfig();
+
+    expect(refresh).toHaveBeenCalledWith({ allowNetwork: false });
   });
 
   it("restores a previously set PI_OFFLINE after runtime creation", async () => {
@@ -495,8 +497,32 @@ describe("createModelRuntimeForAgentDir", () => {
     try {
       const agentDir = await tempAgentDir();
       const runtime = await createModelRuntimeForAgentDir(agentDir);
-      expect(Reflect.get(runtime, "modelNetworkEnabled")).toBe(false);
+      const refresh = vi.spyOn(runtime, "refresh");
+
+      await runtime.reloadConfig();
+
+      expect(refresh).toHaveBeenCalledWith({ allowNetwork: false });
       expect(process.env["PI_OFFLINE"]).toBeUndefined();
+    } finally {
+      if (previous !== undefined) process.env["PI_OFFLINE"] = previous;
+    }
+  });
+
+  it("restores PI_OFFLINE when creations overlap, because the env windows are serialized", async () => {
+    vi.unstubAllEnvs();
+    const previous = process.env["PI_OFFLINE"];
+    delete process.env["PI_OFFLINE"];
+    try {
+      const dirs = await Promise.all([tempAgentDir(), tempAgentDir(), tempAgentDir()]);
+      const runtimes = await Promise.all(dirs.map((dir) => createModelRuntimeForAgentDir(dir)));
+
+      // Interleaved save/restore pairs would leave PI_OFFLINE set process-wide.
+      expect(process.env["PI_OFFLINE"]).toBeUndefined();
+      for (const runtime of runtimes) {
+        const refresh = vi.spyOn(runtime, "refresh");
+        await runtime.reloadConfig();
+        expect(refresh).toHaveBeenCalledWith({ allowNetwork: false });
+      }
     } finally {
       if (previous !== undefined) process.env["PI_OFFLINE"] = previous;
     }

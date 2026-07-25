@@ -100,6 +100,7 @@
             <a href="#manual-uploads">Manual uploads</a>
             <a href="#agent-runtime">Agent profile and companion CLI</a>
             <a href="#pi-extension-provider-baseline">Pi extension providers</a>
+            <a href="#catalog-refresh">Model catalog refresh</a>
             <a href="#session-tools">Session tools</a>
             <a href="#completion-tools">Completion tools</a>
           </aside>
@@ -479,6 +480,17 @@
                       <td>Not supported locally</td>
                       <td>Restart web/API after env changes</td>
                     </tr>
+                    <tr>
+                      <td>Offline mode</td>
+                      <td>—</td>
+                      <td><code>PI_WEB_OFFLINE</code>, <code>PI_OFFLINE</code></td>
+                      <td>Web/API + session daemon env</td>
+                      <td>Not supported locally</td>
+                      <td>
+                        Restart session daemon and web/API after env changes; also disables the
+                        <a href="#catalog-refresh">background model catalog refresh</a>
+                      </td>
+                    </tr>
                   </tbody>
                 </table>
               </div>
@@ -640,6 +652,45 @@
                 (<code>systemctl --user restart pi-web-sessiond</code>). Restarting only the web/API service and running
                 <code>/reload</code> do not rebuild the baseline.
               </div>
+            </section>
+
+            <section id="catalog-refresh">
+              <h2>Background model catalog refresh</h2>
+              <p>
+                PI WEB shares one model runtime across all sessions, and provider model catalogs are refreshed over the
+                network only on the session daemon's own background schedule. Nothing a browser or API request triggers
+                waits on a provider catalog fetch, so a slow or unreachable provider cannot stall opening the model
+                selector, starting a session, or the auth dialogs.
+              </p>
+              <p>The session daemon runs the refresh:</p>
+              <ul>
+                <li>
+                  <strong>15 seconds after the daemon starts</strong>, then <strong>hourly</strong>. Pi treats stored
+                  catalogs as fresh for four hours, so most hourly ticks make no network request at all; the shorter tick
+                  only makes sure a due refresh is not delayed to the next tick.
+                </li>
+                <li>
+                  <strong>Immediately after a provider login or logout</strong>, bypassing that freshness window, because
+                  the cached catalog is known to be wrong.
+                </li>
+              </ul>
+              <p>
+                Each run is bounded: it is aborted after <strong>60 seconds</strong>, and a run that times out or fails
+                earns <strong>one retry after five minutes</strong>. Failures never clear the stored catalogs — the last
+                successfully fetched models stay in use and the daemon log records what failed. A refresh in flight is
+                also aborted when the daemon shuts down.
+              </p>
+              <p>
+                Models fetched by a background refresh appear the next time a client asks for the model list, so a model
+                selector left open across a refresh may need to be reopened.
+              </p>
+              <p>
+                To turn the background refresh off entirely, set <code>PI_WEB_OFFLINE</code> or <code>PI_OFFLINE</code> in
+                the session daemon's environment and restart it. In offline mode PI WEB performs no provider catalog
+                network requests, including after logins, and sessions use the catalogs already stored in the agent
+                profile. The <code>PI_WEB_SKIP_VERSION_CHECK</code> and <code>PI_SKIP_VERSION_CHECK</code> keys do
+                <strong>not</strong> affect this refresh; they only suppress PI WEB release checks.
+              </p>
             </section>
 
             <section id="session-tools">
