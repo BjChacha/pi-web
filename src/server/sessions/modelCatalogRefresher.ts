@@ -1,14 +1,42 @@
 import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 
 /**
- * Matches pi's REMOTE_CATALOG_REFRESH_INTERVAL_MS: provider catalog entries in
- * models-store.json are treated as fresh for four hours.
+ * Tick hourly and let pi decide when a fetch is actually due: pi treats stored
+ * catalogs as fresh for REMOTE_CATALOG_REFRESH_INTERVAL_MS (4h) and skips the
+ * network entirely on an unforced refresh inside that window. Ticking at
+ * exactly 4h would land a few seconds short of the window every time, because
+ * pi stamps `checkedAt` only after a fetch completes, so every other tick would
+ * be skipped and the real cadence would be ~8h. A shorter interval removes that
+ * off-by-one-latency skip, tolerates clock skew, and costs nothing when the
+ * cache is fresh, because scheduled runs never set `force`.
  */
-const DEFAULT_INTERVAL_MS = 4 * 60 * 60 * 1000;
+const DEFAULT_INTERVAL_MS = 60 * 60 * 1000;
 /** Give the daemon a moment to finish startup before the first network refresh. */
 const DEFAULT_INITIAL_DELAY_MS = 15_000;
-/** Bound every catalog refresh so a stalled provider fetch can never block for minutes. */
-const DEFAULT_TIMEOUT_MS = 15_000;
+/**
+ * Bound every catalog refresh so a stalled provider fetch cannot run forever.
+ * One run covers every refreshable provider under a single signal, so this is a
+ * whole-cycle budget for a background job, not pi's 15s startup budget.
+ */
+const DEFAULT_TIMEOUT_MS = 60_000;
+/**
+ * Wait this long before the single follow-up attempt that a timed-out or failed
+ * run earns, so a transient network problem does not cost a whole interval.
+ */
+const DEFAULT_RETRY_DELAY_MS = 5 * 60 * 1000;
+
+/**
+ * Scheduled runs defer to pi's freshness gate; forced runs bypass it because
+ * the caller knows the cached catalog is wrong (for example after a login).
+ */
+type RefreshMode = "scheduled" | "forced";
+
+/** A queued follow-up must keep the strongest mode requested while a run was in flight. */
+const strongestMode = (left: RefreshMode | undefined, right: RefreshMode): RefreshMode =>
+  left === "forced" || right === "forced" ? "forced" : "scheduled";
+
+/** Whether a run finished with a complete picture, or earned a retry. */
+type RunOutcome = "complete" | "incomplete";
 
 /** Minimal structured-logging seam for refresh lifecycle and non-fatal failures. */
 export interface ModelCatalogRefresherLogger {
@@ -29,6 +57,7 @@ export interface ModelCatalogRefresherOptions {
   intervalMs?: number;
   initialDelayMs?: number;
   timeoutMs?: number;
+  retryDelayMs?: number;
 }
 
 const noopLogger: ModelCatalogRefresherLogger = {
@@ -44,8 +73,9 @@ const noopLogger: ModelCatalogRefresherLogger = {
  * own refreshes never touch the network and stay fast on request paths. This
  * refresher is the single place that deliberately performs network refreshes —
  * bounded by an abort timeout, serialized through one in-flight run, and off
- * any request path. `requestRefresh()` additionally asks for a prompt refresh
- * after events that change what should be listed, such as provider logins.
+ * any request path. `requestRefresh()` additionally asks for a prompt forced
+ * refresh after events that change what should be listed, such as provider
+ * logins, where the cached catalog is known to be wrong.
  *
  * When the operator asked for offline behavior (`PI_OFFLINE` / `PI_WEB_OFFLINE`),
  * the refresher performs no network I/O at all and the cached catalogs in
@@ -58,10 +88,12 @@ export class ModelCatalogRefresher {
   private readonly intervalMs: number;
   private readonly initialDelayMs: number;
   private readonly timeoutMs: number;
+  private readonly retryDelayMs: number;
   private initialTimer?: NodeJS.Timeout;
   private intervalTimer?: NodeJS.Timeout;
-  private inflight: Promise<void> | undefined;
-  private queued = false;
+  private retryTimer: NodeJS.Timeout | undefined;
+  private inflight: Promise<RunOutcome> | undefined;
+  private queuedMode: RefreshMode | undefined;
   private disposed = false;
 
   constructor(options: ModelCatalogRefresherOptions) {
@@ -71,6 +103,7 @@ export class ModelCatalogRefresher {
     this.intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS;
     this.initialDelayMs = options.initialDelayMs ?? DEFAULT_INITIAL_DELAY_MS;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.retryDelayMs = options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
   }
 
   start(): void {
@@ -79,42 +112,84 @@ export class ModelCatalogRefresher {
       this.logger.info({}, "offline mode is enabled; skipping background model catalog refreshes");
       return;
     }
-    this.initialTimer = setTimeout(() => { this.requestRefresh(); }, this.initialDelayMs);
+    this.initialTimer = setTimeout(() => { this.queueRefresh("scheduled"); }, this.initialDelayMs);
     this.initialTimer.unref();
-    this.intervalTimer = setInterval(() => { this.requestRefresh(); }, this.intervalMs);
+    this.intervalTimer = setInterval(() => { this.queueRefresh("scheduled"); }, this.intervalMs);
     this.intervalTimer.unref();
   }
 
   /**
-   * Ask for a refresh, coalescing concurrent and overlapping requests. A no-op
-   * in offline mode, so auth changes never trigger network I/O either.
+   * Ask for an immediate refresh that bypasses pi's freshness gate, for callers
+   * that know the cached catalog is stale (auth changes). Coalesces with
+   * concurrent and overlapping requests, and is a no-op in offline mode so auth
+   * changes never trigger network I/O either.
    */
   requestRefresh(): void {
-    if (this.disposed || this.offline) return;
-    if (this.inflight !== undefined) {
-      this.queued = true;
-      return;
-    }
-    const run = this.run();
-    this.inflight = run;
-    this.inflight.finally(() => {
-      this.inflight = undefined;
-      if (this.queued && !this.disposed) {
-        this.queued = false;
-        this.requestRefresh();
-      }
-    }).catch(() => { /* run() never rejects; finally() re-throws otherwise */ });
+    this.queueRefresh("forced");
   }
 
   dispose(): void {
     this.disposed = true;
     if (this.initialTimer !== undefined) clearTimeout(this.initialTimer);
     if (this.intervalTimer !== undefined) clearInterval(this.intervalTimer);
+    this.clearRetryTimer();
   }
 
-  private async run(): Promise<void> {
+  /**
+   * Single entry point for every refresh trigger. Only one run is ever in
+   * flight; overlapping requests collapse into one follow-up that keeps the
+   * strongest mode asked for, so a forced request is never downgraded.
+   */
+  private queueRefresh(mode: RefreshMode, isRetry = false): void {
+    if (this.disposed || this.offline) return;
+    // Any fresh trigger supersedes a pending retry, which keeps retries from
+    // stacking up behind normal activity.
+    if (!isRetry) this.clearRetryTimer();
+    if (this.inflight !== undefined) {
+      this.queuedMode = strongestMode(this.queuedMode, mode);
+      return;
+    }
+    const run = this.run(mode);
+    this.inflight = run;
+    run.then((outcome) => {
+      this.inflight = undefined;
+      const queued = this.queuedMode;
+      this.queuedMode = undefined;
+      if (queued !== undefined) {
+        // A request that arrived during the run replaces any retry this run
+        // would have earned; it runs now instead.
+        this.queueRefresh(queued);
+        return;
+      }
+      // Only a first attempt earns a retry, so a failing provider can never
+      // turn into a retry loop.
+      if (outcome === "incomplete" && !isRetry) this.scheduleRetry(mode);
+    }).catch(() => { /* run() reports failures through its logger and never rejects */ });
+  }
+
+  private scheduleRetry(mode: RefreshMode): void {
+    if (this.disposed) return;
+    this.logger.info({ retryDelayMs: this.retryDelayMs, mode }, "scheduling one model catalog refresh retry");
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = undefined;
+      this.queueRefresh(mode, true);
+    }, this.retryDelayMs);
+    this.retryTimer.unref();
+  }
+
+  private clearRetryTimer(): void {
+    if (this.retryTimer === undefined) return;
+    clearTimeout(this.retryTimer);
+    this.retryTimer = undefined;
+  }
+
+  private async run(mode: RefreshMode): Promise<RunOutcome> {
     try {
-      const result = await this.runtime.refresh({ allowNetwork: true, signal: AbortSignal.timeout(this.timeoutMs) });
+      const result = await this.runtime.refresh({
+        allowNetwork: true,
+        force: mode === "forced",
+        signal: AbortSignal.timeout(this.timeoutMs),
+      });
       if (result.aborted) {
         this.logger.warn({ timeoutMs: this.timeoutMs }, "model catalog refresh timed out; keeping cached catalogs");
       }
@@ -122,8 +197,10 @@ export class ModelCatalogRefresher {
         const providers = [...result.errors.entries()].map(([providerId, error]) => `${providerId}: ${error.message}`);
         this.logger.warn({ providers }, "model catalog refresh failed for some providers; keeping cached catalogs");
       }
+      return result.aborted || result.errors.size > 0 ? "incomplete" : "complete";
     } catch (error: unknown) {
       this.logger.error({ err: error }, "model catalog refresh failed; keeping cached catalogs");
+      return "incomplete";
     }
   }
 }

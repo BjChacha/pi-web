@@ -3,6 +3,7 @@ import { ModelCatalogRefresher } from "./modelCatalogRefresher.js";
 
 interface RefreshCall {
   allowNetwork?: boolean;
+  force?: boolean;
   signal?: AbortSignal;
 }
 
@@ -12,6 +13,7 @@ interface RefreshResult {
 }
 
 const okResult = (): RefreshResult => ({ aborted: false, errors: new Map<string, Error>() });
+const abortedResult = (): RefreshResult => ({ aborted: true, errors: new Map<string, Error>() });
 
 function deferred<T>() {
   let resolveValue: (value: T) => void = () => undefined;
@@ -62,6 +64,67 @@ describe("ModelCatalogRefresher", () => {
     const call = runtime.calls.at(0);
     expect(call?.allowNetwork).toBe(true);
     expect(call?.signal).toBeInstanceOf(AbortSignal);
+    refresher.dispose();
+  });
+
+  it("forces auth-triggered refreshes past pi's freshness gate", async () => {
+    const runtime = createRuntime();
+    const refresher = new ModelCatalogRefresher({ runtime });
+
+    refresher.requestRefresh();
+    await flushMicrotasks();
+
+    expect(runtime.calls.at(0)?.force).toBe(true);
+    refresher.dispose();
+  });
+
+  it("leaves scheduled refreshes unforced so pi's freshness gate stays in charge", async () => {
+    const runtime = createRuntime();
+    const refresher = new ModelCatalogRefresher({ runtime, initialDelayMs: 1_000, intervalMs: 60_000 });
+    refresher.start();
+
+    await vi.advanceTimersByTimeAsync(61_000);
+
+    expect(runtime.refresh).toHaveBeenCalledTimes(2);
+    expect(runtime.calls.map((call) => call.force)).toEqual([false, false]);
+    refresher.dispose();
+  });
+
+  it("keeps a forced request forced when it is queued behind a scheduled run", async () => {
+    const gate = deferred<RefreshResult>();
+    const calls: RefreshCall[] = [];
+    const refresh = vi.fn((options?: RefreshCall) => {
+      calls.push(options ?? {});
+      return calls.length === 1 ? gate.promise : Promise.resolve(okResult());
+    });
+    const refresher = new ModelCatalogRefresher({ runtime: { refresh }, initialDelayMs: 1_000, intervalMs: 60_000 });
+    refresher.start();
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(calls.at(0)?.force).toBe(false);
+
+    refresher.requestRefresh();
+    gate.resolve(okResult());
+    await flushMicrotasks();
+
+    expect(refresh).toHaveBeenCalledTimes(2);
+    expect(calls.at(1)?.force).toBe(true);
+    refresher.dispose();
+  });
+
+  it("refreshes well within pi's four-hour freshness window", async () => {
+    const fourHoursMs = 4 * 60 * 60 * 1000;
+    const runtime = createRuntime();
+    // Defaults matter here: the bug this pins is a scheduled interval that lands
+    // just short of pi's TTL and therefore only fetches on every other tick.
+    const refresher = new ModelCatalogRefresher({ runtime });
+    refresher.start();
+
+    await vi.advanceTimersByTimeAsync(fourHoursMs);
+
+    // Ticks are cheap because scheduled runs never force, so several land inside
+    // one TTL window and at least one is guaranteed to be past the gate.
+    expect(runtime.refresh.mock.calls.length).toBeGreaterThan(2);
     refresher.dispose();
   });
 
@@ -122,6 +185,87 @@ describe("ModelCatalogRefresher", () => {
     await flushMicrotasks();
 
     expect(refresh).toHaveBeenCalledOnce();
+  });
+
+  it("retries once after an aborted run and then waits for the schedule", async () => {
+    const { logger, info } = createLogger();
+    const refresh = vi.fn()
+      .mockResolvedValueOnce(abortedResult())
+      .mockResolvedValueOnce(abortedResult())
+      .mockResolvedValue(okResult());
+    const refresher = new ModelCatalogRefresher({ runtime: { refresh }, logger, retryDelayMs: 30_000, intervalMs: 3_600_000 });
+
+    refresher.requestRefresh();
+    await flushMicrotasks();
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(info).toHaveBeenCalledWith({ retryDelayMs: 30_000, mode: "forced" }, "scheduling one model catalog refresh retry");
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(refresh).toHaveBeenCalledTimes(2);
+
+    // The retry also failed, but a retry never earns another retry.
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(refresh).toHaveBeenCalledTimes(2);
+    refresher.dispose();
+  });
+
+  it("retries once after a run reports provider errors", async () => {
+    const errors = new Map<string, Error>([["openrouter", new Error("boom")]]);
+    const refresh = vi.fn()
+      .mockResolvedValueOnce({ aborted: false, errors })
+      .mockResolvedValue(okResult());
+    const refresher = new ModelCatalogRefresher({ runtime: { refresh }, retryDelayMs: 30_000 });
+
+    refresher.requestRefresh();
+    await flushMicrotasks();
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(refresh).toHaveBeenCalledTimes(2);
+    refresher.dispose();
+  });
+
+  it("does not schedule a retry after a successful run", async () => {
+    const runtime = createRuntime();
+    const refresher = new ModelCatalogRefresher({ runtime, retryDelayMs: 30_000, intervalMs: 3_600_000 });
+
+    refresher.requestRefresh();
+    await flushMicrotasks();
+    await vi.advanceTimersByTimeAsync(300_000);
+
+    expect(runtime.refresh).toHaveBeenCalledOnce();
+    refresher.dispose();
+  });
+
+  it("drops a pending retry when dispose happens first", async () => {
+    const refresh = vi.fn()
+      .mockResolvedValueOnce(abortedResult())
+      .mockResolvedValue(okResult());
+    const refresher = new ModelCatalogRefresher({ runtime: { refresh }, retryDelayMs: 30_000 });
+
+    refresher.requestRefresh();
+    await flushMicrotasks();
+    refresher.dispose();
+
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(refresh).toHaveBeenCalledOnce();
+  });
+
+  it("lets a new request supersede a pending retry instead of running both", async () => {
+    const refresh = vi.fn()
+      .mockResolvedValueOnce(abortedResult())
+      .mockResolvedValue(okResult());
+    const refresher = new ModelCatalogRefresher({ runtime: { refresh }, retryDelayMs: 30_000 });
+
+    refresher.requestRefresh();
+    await flushMicrotasks();
+
+    refresher.requestRefresh();
+    await flushMicrotasks();
+    expect(refresh).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(refresh).toHaveBeenCalledTimes(2);
+    refresher.dispose();
   });
 
   it("never touches the network when offline mode is enabled", async () => {
