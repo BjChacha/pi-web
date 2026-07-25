@@ -173,6 +173,67 @@ describe("ModelCatalogRefresher", () => {
     expect(runtime.refresh).not.toHaveBeenCalled();
   });
 
+  it("aborts the in-flight refresh when disposed", async () => {
+    const { logger, info, warn, error } = createLogger();
+    let observed: AbortSignal | undefined;
+    // Stand in for a provider fetch that only settles when its signal aborts,
+    // which is what makes an unaborted run delay daemon shutdown.
+    const refresh = vi.fn((options?: RefreshCall) => {
+      observed = options?.signal;
+      return new Promise<RefreshResult>((resolve) => {
+        options?.signal?.addEventListener("abort", () => { resolve(abortedResult()); });
+      });
+    });
+    const refresher = new ModelCatalogRefresher({ runtime: { refresh }, logger });
+
+    refresher.requestRefresh();
+    await flushMicrotasks();
+    expect(observed?.aborted).toBe(false);
+
+    refresher.dispose();
+    await flushMicrotasks();
+
+    expect(observed?.aborted).toBe(true);
+    // A deliberate shutdown abort is expected, not a timeout or a fault.
+    expect(info).toHaveBeenCalledWith({}, "model catalog refresh aborted by dispose; keeping cached catalogs");
+    expect(warn).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it("does not report a refresh that rejects because dispose aborted it as a failure", async () => {
+    const { logger, info, warn, error } = createLogger();
+    const refresh = vi.fn((options?: RefreshCall) => new Promise<RefreshResult>((_resolve, reject) => {
+      options?.signal?.addEventListener("abort", () => { reject(new Error("This operation was aborted")); });
+    }));
+    const refresher = new ModelCatalogRefresher({ runtime: { refresh }, logger });
+
+    refresher.requestRefresh();
+    await flushMicrotasks();
+    refresher.dispose();
+    await flushMicrotasks();
+
+    expect(info).toHaveBeenCalledWith({}, "model catalog refresh aborted by dispose; keeping cached catalogs");
+    expect(warn).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it("keeps the timers of the first start when start is called again", async () => {
+    const runtime = createRuntime();
+    const refresher = new ModelCatalogRefresher({ runtime, initialDelayMs: 1_000, intervalMs: 60_000 });
+
+    refresher.start();
+    refresher.start();
+
+    await vi.advanceTimersByTimeAsync(61_000);
+
+    // A leaked second timer pair would double every scheduled refresh.
+    expect(runtime.refresh).toHaveBeenCalledTimes(2);
+
+    refresher.dispose();
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(runtime.refresh).toHaveBeenCalledTimes(2);
+  });
+
   it("does not run a queued follow-up after dispose", async () => {
     const gate = deferred<RefreshResult>();
     const refresh = vi.fn().mockImplementation(() => gate.promise);

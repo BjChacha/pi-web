@@ -72,8 +72,8 @@ const noopLogger: ModelCatalogRefresherLogger = {
  * The shared ModelRuntime is constructed offline (see authService.ts), so its
  * own refreshes never touch the network and stay fast on request paths. This
  * refresher is the single place that deliberately performs network refreshes —
- * bounded by an abort timeout, serialized through one in-flight run, and off
- * any request path. `requestRefresh()` additionally asks for a prompt forced
+ * bounded by an abort timeout, serialized through one in-flight run, stopped by
+ * `dispose()` even mid-flight, and off any request path. `requestRefresh()` additionally asks for a prompt forced
  * refresh after events that change what should be listed, such as provider
  * logins, where the cached catalog is known to be wrong.
  *
@@ -92,9 +92,16 @@ export class ModelCatalogRefresher {
   private initialTimer?: NodeJS.Timeout;
   private intervalTimer?: NodeJS.Timeout;
   private retryTimer: NodeJS.Timeout | undefined;
-  private inflight: Promise<RunOutcome> | undefined;
+  private inflight: Promise<void> | undefined;
   private queuedMode: RefreshMode | undefined;
+  private started = false;
   private disposed = false;
+  /**
+   * Aborted by `dispose()` so a refresh already in flight stops with the
+   * refresher instead of holding its fetch open for the rest of the timeout
+   * budget, which would delay daemon shutdown.
+   */
+  private readonly lifetime = new AbortController();
 
   constructor(options: ModelCatalogRefresherOptions) {
     this.runtime = options.runtime;
@@ -106,8 +113,10 @@ export class ModelCatalogRefresher {
     this.retryDelayMs = options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
   }
 
+  /** Idempotent: a second call keeps the timers the first call installed. */
   start(): void {
-    if (this.disposed) return;
+    if (this.disposed || this.started) return;
+    this.started = true;
     if (this.offline) {
       this.logger.info({}, "offline mode is enabled; skipping background model catalog refreshes");
       return;
@@ -128,11 +137,13 @@ export class ModelCatalogRefresher {
     this.queueRefresh("forced");
   }
 
+  /** Terminal: stops the schedule, drops any queued follow-up, and aborts an in-flight run. */
   dispose(): void {
     this.disposed = true;
     if (this.initialTimer !== undefined) clearTimeout(this.initialTimer);
     if (this.intervalTimer !== undefined) clearInterval(this.intervalTimer);
     this.clearRetryTimer();
+    this.lifetime.abort();
   }
 
   /**
@@ -149,22 +160,25 @@ export class ModelCatalogRefresher {
       this.queuedMode = strongestMode(this.queuedMode, mode);
       return;
     }
-    const run = this.run(mode);
-    this.inflight = run;
-    run.then((outcome) => {
-      this.inflight = undefined;
-      const queued = this.queuedMode;
-      this.queuedMode = undefined;
-      if (queued !== undefined) {
-        // A request that arrived during the run replaces any retry this run
-        // would have earned; it runs now instead.
-        this.queueRefresh(queued);
-        return;
-      }
-      // Only a first attempt earns a retry, so a failing provider can never
-      // turn into a retry loop.
-      if (outcome === "incomplete" && !isRetry) this.scheduleRetry(mode);
-    }).catch(() => { /* run() reports failures through its logger and never rejects */ });
+    // runCycle() reports every failure through the logger and never rejects.
+    this.inflight = this.runCycle(mode, isRetry);
+  }
+
+  /** One run plus the follow-up it leads to: a queued request, a single retry, or nothing. */
+  private async runCycle(mode: RefreshMode, isRetry: boolean): Promise<void> {
+    const outcome = await this.run(mode);
+    this.inflight = undefined;
+    const queued = this.queuedMode;
+    this.queuedMode = undefined;
+    if (queued !== undefined) {
+      // A request that arrived during the run replaces any retry this run would
+      // have earned; it runs now instead.
+      this.queueRefresh(queued);
+      return;
+    }
+    // Only a first attempt earns a retry, so a failing provider can never turn
+    // into a retry loop.
+    if (outcome === "incomplete" && !isRetry) this.scheduleRetry(mode);
   }
 
   private scheduleRetry(mode: RefreshMode): void {
@@ -188,8 +202,12 @@ export class ModelCatalogRefresher {
       const result = await this.runtime.refresh({
         allowNetwork: true,
         force: mode === "forced",
-        signal: AbortSignal.timeout(this.timeoutMs),
+        signal: AbortSignal.any([this.lifetime.signal, AbortSignal.timeout(this.timeoutMs)]),
       });
+      if (result.aborted && this.lifetime.signal.aborted) {
+        this.logStoppedByDispose();
+        return "incomplete";
+      }
       if (result.aborted) {
         this.logger.warn({ timeoutMs: this.timeoutMs }, "model catalog refresh timed out; keeping cached catalogs");
       }
@@ -199,8 +217,14 @@ export class ModelCatalogRefresher {
       }
       return result.aborted || result.errors.size > 0 ? "incomplete" : "complete";
     } catch (error: unknown) {
-      this.logger.error({ err: error }, "model catalog refresh failed; keeping cached catalogs");
+      if (this.lifetime.signal.aborted) this.logStoppedByDispose();
+      else this.logger.error({ err: error }, "model catalog refresh failed; keeping cached catalogs");
       return "incomplete";
     }
+  }
+
+  /** A shutdown abort is expected, so it must not be reported as a timeout or a fault. */
+  private logStoppedByDispose(): void {
+    this.logger.info({}, "model catalog refresh aborted by dispose; keeping cached catalogs");
   }
 }
