@@ -73,9 +73,10 @@ const noopLogger: ModelCatalogRefresherLogger = {
  * own refreshes never touch the network and stay fast on request paths. This
  * refresher is the single place that deliberately performs network refreshes —
  * bounded by an abort timeout, serialized through one in-flight run, stopped by
- * `dispose()` even mid-flight, and off any request path. `requestRefresh()` additionally asks for a prompt forced
- * refresh after events that change what should be listed, such as provider
- * logins, where the cached catalog is known to be wrong.
+ * `dispose()` even mid-flight, and off any request path. `requestRefresh()`
+ * additionally asks for a prompt forced refresh after events that change what
+ * should be listed, such as provider logins, where the cached catalog is known
+ * to be wrong.
  *
  * When the operator asked for offline behavior (`PI_OFFLINE` / `PI_WEB_OFFLINE`),
  * the refresher performs no network I/O at all and the cached catalogs in

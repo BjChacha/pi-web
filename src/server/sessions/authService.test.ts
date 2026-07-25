@@ -474,6 +474,9 @@ describe("createModelRuntimeForAgentDir", () => {
   it("keeps runtime-owned refreshes local so request paths cannot stall", async () => {
     // reloadConfig() is the request-path call site that regressed: it refreshes
     // with allowNetwork = the construction-time network flag and no abort signal.
+    // The ambient PI_OFFLINE=1 stub has to go, or the runtime would be offline
+    // whether or not the helper forces it and this would assert nothing.
+    vi.stubEnv("PI_OFFLINE", undefined);
     const agentDir = await tempAgentDir();
     const runtime = await createModelRuntimeForAgentDir(agentDir);
     const refresh = vi.spyOn(runtime, "refresh");
