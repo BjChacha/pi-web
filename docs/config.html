@@ -675,10 +675,11 @@
                 </li>
               </ul>
               <p>
-                Each run is bounded: it is aborted after <strong>60 seconds</strong>, and a run that times out or fails
-                earns <strong>one retry after five minutes</strong>. Failures never clear the stored catalogs — the last
-                successfully fetched models stay in use and the daemon log records what failed. A refresh in flight is
-                also aborted when the daemon shuts down.
+                Each run is bounded: it is aborted after <strong>60 seconds</strong>, and a run that times out or cannot
+                reach a provider earns <strong>one retry after five minutes</strong>; a provider that answers with an
+                error status is retried on the next scheduled refresh instead. Failures never clear the stored catalogs
+                — the last successfully fetched models stay in use and the daemon log records what failed. A refresh in
+                flight is also aborted when the daemon shuts down.
               </p>
               <p>
                 Models fetched by a background refresh appear the next time a client asks for the model list, so a model

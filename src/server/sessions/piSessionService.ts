@@ -1400,7 +1400,7 @@ export class PiSessionService implements SessionRouteService {
 
   async availableModels(ref: PiSessionLookup): Promise<ClientSessionModel[]> {
     const session = await this.getOrOpen(ref);
-    await session.modelRuntime.reloadConfig();
+    await session.modelRuntime.refresh();
     const models = session.scopedModels.length > 0
       ? session.scopedModels.map((scoped) => scoped.model)
       : session.modelRuntime.getAvailableSnapshot();
@@ -1411,7 +1411,7 @@ export class PiSessionService implements SessionRouteService {
     await this.assertWritable(ref);
     const session = await this.getOrOpen(ref);
     this.assertTreeNavigationInactive(session, "change models");
-    await session.modelRuntime.reloadConfig();
+    await session.modelRuntime.refresh();
     this.assertTreeNavigationInactive(session, "change models");
     const candidates = session.scopedModels.length > 0
       ? session.scopedModels.map((scoped) => scoped.model)

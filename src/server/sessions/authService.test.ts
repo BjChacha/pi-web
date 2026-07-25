@@ -11,7 +11,7 @@ import { OAuthLoginFlowService } from "./oauthLoginFlowService.js";
 const tempDirs: string[] = [];
 
 beforeEach(() => {
-  // Pi 0.81 uses PI_OFFLINE for refreshes after runtime creation. Auth tests
+  // Pi 0.82 uses PI_OFFLINE for refreshes after runtime creation. Auth tests
   // exercise local credential behavior and must never fetch provider catalogs.
   vi.stubEnv("PI_OFFLINE", "1");
 });
@@ -24,14 +24,14 @@ afterEach(async () => {
 describe("AuthService", () => {
   it("saves API keys and emits a global auth change after the runtime refreshes", async () => {
     const { auth, runtime, credentials, changes } = await createAuthService();
-    const reloadConfig = vi.spyOn(runtime, "reloadConfig").mockResolvedValue(undefined);
+    // Pi 0.82 merged reloadConfig() into refresh(), so the provider lookup and
+    // the post-login refresh both land on refresh(): one call each.
     const refresh = vi.spyOn(runtime, "refresh");
 
     await expect(auth.saveApiKey("anthropic", "sk-test")).resolves.toEqual({ accepted: true });
 
     await expect(credentials.read("anthropic")).resolves.toEqual({ type: "api_key", key: "sk-test" });
-    expect(reloadConfig).toHaveBeenCalledOnce();
-    expect(refresh).toHaveBeenCalledOnce();
+    expect(refresh).toHaveBeenCalledTimes(2);
     expect(changes).toEqual([{}]);
     auth.dispose();
   });
@@ -382,10 +382,16 @@ describe("AuthService", () => {
       expires: Date.now() + 60_000,
     };
     vi.spyOn(provider.auth.oauth, "login").mockResolvedValue(credential);
-    vi.spyOn(runtime, "reloadConfig").mockResolvedValue(undefined);
     const refreshStarted = deferred<undefined>();
     const finishRefresh = deferred<undefined>();
+    // Pi 0.82 merged reloadConfig() into refresh(), so the provider lookup now
+    // shares this seam with the post-login refresh. Only the post-login call
+    // (the second) is held open; deferring the lookup would stall the flow
+    // before it starts.
+    let refreshCalls = 0;
     const refresh = vi.spyOn(runtime, "refresh").mockImplementation(async () => {
+      refreshCalls += 1;
+      if (refreshCalls < 2) return { aborted: false, errors: new Map() };
       refreshStarted.resolve(undefined);
       await finishRefresh.promise;
       return { aborted: false, errors: new Map() };
@@ -405,7 +411,7 @@ describe("AuthService", () => {
     expect(auth.oauthFlow(state.flowId)).not.toHaveProperty("error");
     await expect(credentials.read(provider.id)).resolves.toEqual(credential);
     expect(changes).toEqual([{}]);
-    expect(refresh).toHaveBeenCalledOnce();
+    expect(refresh).toHaveBeenCalledTimes(2);
     auth.dispose();
   });
 
@@ -472,8 +478,10 @@ describe("AuthService", () => {
 
 describe("createModelRuntimeForAgentDir", () => {
   it("keeps runtime-owned refreshes local so request paths cannot stall", async () => {
-    // reloadConfig() is the request-path call site that regressed: it refreshes
-    // with allowNetwork = the construction-time network flag and no abort signal.
+    // Runtime-owned mutations refresh with allowNetwork = the construction-time
+    // network flag and no abort signal; that is what regressed. Pi 0.82 removed
+    // reloadConfig(), so removeRuntimeApiKey() is the surviving public seam that
+    // still forwards that flag explicitly and can be observed on refresh().
     // The ambient PI_OFFLINE=1 stub has to go, or the runtime would be offline
     // whether or not the helper forces it and this would assert nothing.
     vi.stubEnv("PI_OFFLINE", undefined);
@@ -481,7 +489,7 @@ describe("createModelRuntimeForAgentDir", () => {
     const runtime = await createModelRuntimeForAgentDir(agentDir);
     const refresh = vi.spyOn(runtime, "refresh");
 
-    await runtime.reloadConfig();
+    await runtime.removeRuntimeApiKey("anthropic");
 
     expect(refresh).toHaveBeenCalledWith({ allowNetwork: false });
   });
@@ -502,7 +510,7 @@ describe("createModelRuntimeForAgentDir", () => {
       const runtime = await createModelRuntimeForAgentDir(agentDir);
       const refresh = vi.spyOn(runtime, "refresh");
 
-      await runtime.reloadConfig();
+      await runtime.removeRuntimeApiKey("anthropic");
 
       expect(refresh).toHaveBeenCalledWith({ allowNetwork: false });
       expect(process.env["PI_OFFLINE"]).toBeUndefined();
@@ -523,7 +531,7 @@ describe("createModelRuntimeForAgentDir", () => {
       expect(process.env["PI_OFFLINE"]).toBeUndefined();
       for (const runtime of runtimes) {
         const refresh = vi.spyOn(runtime, "refresh");
-        await runtime.reloadConfig();
+        await runtime.removeRuntimeApiKey("anthropic");
         expect(refresh).toHaveBeenCalledWith({ allowNetwork: false });
       }
     } finally {
