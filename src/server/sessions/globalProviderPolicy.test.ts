@@ -157,6 +157,60 @@ describe("bootstrapAndFreezeGlobalExtensionProviders", () => {
     expect(JSON.stringify(ignoredMutations)).not.toContain("secret");
   });
 
+  it("keeps the frozen baseline intact across runtime refreshes that rebuild every provider", async () => {
+    const agentDir = await agentDirWithExtension(`
+      export default function (pi) {
+        pi.registerProvider("global-config", {
+          name: "Global Config",
+          baseUrl: "https://global.example.com",
+          apiKey: "$GLOBAL_PROVIDER_KEY",
+          api: "openai-completions",
+          models: [{
+            id: "global-model",
+            name: "Global Model",
+            reasoning: false,
+            input: ["text"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 8192,
+            maxTokens: 1024
+          }]
+        });
+      }
+    `);
+    const runtime = await createTestModelRuntime();
+    // Native and config registrations use separate runtime storage, so the
+    // baseline must cover both before it is frozen.
+    runtime.registerNativeProvider(nativeProvider("global-native", "Global Native"));
+    const { logger } = capturingLogger();
+
+    await bootstrapAndFreezeGlobalExtensionProviders(runtime, agentDir, logger);
+
+    const baselineRegisteredIds = [...runtime.getRegisteredProviderIds()].sort();
+    const baselineProviderIds = runtime.getProviders().map((provider) => provider.id).sort();
+    const baselineConfig = runtime.getRegisteredProviderConfig("global-config");
+    const baselineNative = runtime.getRegisteredNativeProvider("global-native");
+    expect(baselineRegisteredIds).toEqual(["global-config", "global-native"]);
+    expect(baselineProviderIds).toEqual(expect.arrayContaining(["global-config", "global-native", TEST_MODEL_PROVIDER]));
+
+    // Pi 0.82 rebuilds every provider inside refresh(), and PI WEB's background
+    // refresher calls it hourly, so ignored mutations must stay ignored across it.
+    registerProjectConfigProvider(runtime);
+    runtime.registerNativeProvider(nativeProvider("project-native"));
+    runtime.unregisterProvider("global-config");
+    runtime.unregisterProvider("global-native");
+    await runtime.refresh();
+    await runtime.refresh();
+
+    expect([...runtime.getRegisteredProviderIds()].sort()).toEqual(baselineRegisteredIds);
+    expect(runtime.getProviders().map((provider) => provider.id).sort()).toEqual(baselineProviderIds);
+    expect(runtime.getRegisteredProviderConfig("global-config")).toBe(baselineConfig);
+    expect(runtime.getRegisteredNativeProvider("global-native")).toBe(baselineNative);
+    expect(runtime.getRegisteredProviderConfig("project-config")).toBeUndefined();
+    expect(runtime.getRegisteredNativeProvider("project-native")).toBeUndefined();
+    expect(runtime.getModel("global-config", "global-model")).toBeDefined();
+    expect(runtime.getModel(TEST_MODEL_PROVIDER, TEST_MODEL_ID)).toBeDefined();
+  });
+
   it("keeps ignored mutations as no-ops when structured logging fails", async () => {
     const agentDir = await tempDir("pi-web-global-provider-unit-");
     const runtime = await createTestModelRuntime();
