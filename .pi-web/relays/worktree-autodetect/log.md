@@ -273,3 +273,89 @@ None. Nothing ambiguous, no design decision needed, no intervention trigger fire
 ### Handing off?
 
 **Yes.** Work committed, packet updated, leg 2 dispatched via `spawn_session`.
+
+---
+
+## Leg 2 — Non-disruptive workspace topology refresh in the client
+
+**Commit:** `d0f8f9f` — `feat(workspaces): add non-disruptive workspace topology refresh`
+
+### What I did
+
+Added `WorkspaceController.refreshSelectedProjectTopology()`: it reads the selected project
+and machine, calls `api.workspaces(project.id, machineId)`, re-reads state, discards the
+response if machine or selected project changed mid-flight, and applies the list via the
+existing private `applyProjectWorkspaces` — and nothing else. No selection is re-derived, no
+session is cleared, no workspace-scoped state is reset, no URL update.
+
+Added `src/client/src/controllers/workspaceController.test.ts` (7 tests, new file).
+
+### Decisions and why
+
+- **Did not use `selectPreferredWorkspace` / `selectWorkspace`.** `plan.md` documented this
+  as the plausible-looking destructive shape; I confirmed it in the source before writing.
+  `selectWorkspace` has no already-selected guard, so it unconditionally calls
+  `sessions.clearActiveSession()` and `setState({ ...resetWorkspaceScopedState() })` — which
+  clears `sessions`, `fileTree`, `expandedDirs`, `selectedFilePath`, `gitStatus`, the three
+  diff fields, and `selectedTerminalId`. Since leg 3 calls this on every browser resume, that
+  would blank the UI on every alt-tab. Applying the list alone is sufficient.
+- **Selected workspace that disappeared: selection left untouched**, per plan. No new
+  recovery path; `refreshAfterWorkspaceDeleted` still owns that. Covered by a test asserting
+  the vanished workspace stays selected and `clearActiveSession` is not called.
+- **Errors: injected sink, not `state.error`.** Added optional
+  `onBackgroundError(message, error)` to `WorkspaceControllerDependencies`, defaulting to
+  `console.warn`, mirroring `SessionNotificationController`'s existing pattern. This keeps the
+  behavior testable without stubbing `console` and guarantees a background refresh never
+  paints an error banner over a working session. The method therefore never rejects.
+- **Guard style copied from `selectProject`** (compare `selectedMachineId` and
+  `selectedProject?.id` after the await) rather than inventing a generation counter — the
+  method is a single request with no trailing-pass semantics, so
+  `ProjectActivityOwnershipCoordinator`'s heavier machinery would have been disproportionate.
+- **Wrote a `why` comment on the method**, not a `what` one: it records the invariant and why
+  the simpler-looking `selectWorkspace` route is unsafe, so a future editor cannot "simplify"
+  it back into the bug.
+- **Nothing wired into `PiWebApp`**, per plan — deliberately leg 3.
+
+### Verification that the guard is not vacuous
+
+Mutation-tested the tests: temporarily patched the method to the plausible wrong version
+(`selectPreferredWorkspace(...)` + `await this.selectWorkspace(...)`) and re-ran the file —
+**2 of 7 tests failed** (selection-preserved and vanished-workspace). Restored the file from
+backup and re-confirmed 7/7 green. The tests genuinely pin the invariant.
+
+### Checks run
+
+- `npx vitest --run src/client/src/controllers/workspaceController.test.ts` → **7 passed**
+- `npx vitest --run src/client/src/controllers` → **26 files, 204 tests passed** (no
+  regression in sibling controllers)
+- `npm run typecheck` → **clean** (one iteration: `expandedDirs` is
+  `Record<string, FileTreeEntry[]>`, not booleans — fixed in the fixture)
+- `npx eslint` on both changed files → **clean**
+- pre-commit `npm run verify:staged` on commit → typecheck (cached), knip, eslint, and
+  related vitest (5 files / 21 tests) all **passed**
+
+`npm run verify` was not run: the charter assigns it to leg 3, and this leg's change is
+contained to one controller.
+
+### Artifacts changed
+
+- `src/client/src/controllers/workspaceController.ts` (modified: new method, new optional
+  `onBackgroundError` dependency)
+- `src/client/src/controllers/workspaceController.test.ts` (new, 7 tests)
+- `status.md` (leg tracking → last completed 2 / next 3, next task set to leg 3 with the
+  method's exact call signature, added notes on test coverage + the mutation check + the new
+  `onBackgroundError` dependency, rewrote Blockers to record that the UI-churn risk did not
+  materialize)
+
+Still no changeset — leg 3 owns it, and `status.md` now flags it explicitly as missing.
+
+### Blockers
+
+None. The charter's main intervention trigger for this leg (refresh cannot be made
+non-disruptive without visible UI churn) did not fire: no workaround was needed. No watcher,
+timer, process, endpoint, or push channel added. No sessiond code touched, so **no manual
+session daemon restart is required**.
+
+### Handing off?
+
+**Yes.** Work committed, packet updated, leg 3 dispatched via `spawn_session`.
