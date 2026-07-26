@@ -10,6 +10,7 @@ export const PI_WEB_CAPABILITIES = {
   sessionsPersistedState: "sessions.persistedState",
   sessionsNotifications: "sessions.notifications",
   sessionsUnread: "sessions.unread",
+  sessionsAskUser: "sessions.askUser",
   promptAttachments: "prompt.attachments",
   workspaceFileSuggestions: "workspace.fileSuggestions",
   piPackagesManage: "piPackages.manage",
@@ -97,6 +98,11 @@ export interface PiWebConfigValues {
    * while the capability stabilizes. Requires spawnSessions to be enabled.
    */
   subsessions?: boolean;
+  /**
+   * When true, LLMs can post a question set to the browser via the ask_user
+   * tool. On by default; set to `false` to remove the tool from the runtime.
+   */
+  askUser?: boolean;
   /** Desired Pi-compatible agent profile and companion CLI (Pi by default). */
   agent?: PiWebAgentConfig;
 }
@@ -161,6 +167,7 @@ export interface PiWebConfigEnvOverrides {
   allowedHosts: boolean;
   spawnSessions: boolean;
   subsessions: boolean;
+  askUser: boolean;
   agentCommand: boolean;
   agentDir: boolean;
   /** The configured directory environment source, even when Pi compatibility is inactive for the desired command. */
@@ -433,6 +440,54 @@ export interface QueuedSessionMessage {
   text: string;
 }
 
+/** One selectable option of an {@link AskUserQuestion}. */
+export interface AskUserQuestionOption {
+  /** Stable machine value reported back to the model. */
+  value: string;
+  /** Short human label rendered in the browser. */
+  label: string;
+  /** Optional clarifying line rendered under the label. */
+  detail?: string;
+}
+
+/**
+ * One question of an `ask_user` set. Questions are never required: the user may
+ * submit while leaving any of them untouched, and unanswered questions are
+ * reported to the model as such.
+ */
+export interface AskUserQuestion {
+  /** Unique within the ask; used as the answer key. */
+  id: string;
+  /** The question itself, as one plain-text line. */
+  question: string;
+  /** Optional supporting context rendered under the question. */
+  detail?: string;
+  /** Offered options; may be empty when only free text makes sense. */
+  options: AskUserQuestionOption[];
+  /** When true, a labelled free-text field is offered alongside the options. */
+  allowOther?: boolean;
+  /** When true, several options may be selected at once. */
+  multiple?: boolean;
+}
+
+/**
+ * The open, unanswered question set of a session. Daemon-owned and reported in
+ * {@link SessionStatus}, so a reconnecting or reloading browser rehydrates it
+ * without depending on having seen the `ask.opened` event.
+ */
+export interface PendingAskUser {
+  askId: string;
+  askedAt: string;
+  questions: AskUserQuestion[];
+}
+
+/**
+ * Why an ask stopped being the session's open ask. The answer/outcome types that
+ * describe *what* the user replied arrive with the pending-ask store that
+ * computes them.
+ */
+export type AskUserCloseReason = "submitted" | "superseded" | "cancelled";
+
 /**
  * Progress of the session startup window, where the daemon is still
  * constructing the agent session and no `PiAgentSession` exists yet, so
@@ -610,6 +665,11 @@ export interface SessionStatus {
    * there are none. See {@link SessionWarning}.
    */
   warnings?: SessionWarning[];
+  /**
+   * The session's open `ask_user` question set, when one is waiting for the
+   * user. Daemon-owned, so it survives browser reload and web/API restarts.
+   */
+  pendingAsk?: PendingAskUser;
 }
 
 export interface WorkspaceActivity {
@@ -990,6 +1050,8 @@ type SessionUiEventBody =
   | { type: "command.output"; level: "info" | "success" | "error"; message: string; notificationId?: string }
   | SessionNotificationInboxEvent
   | { type: "session.error"; message: string }
+  | { type: "ask.opened"; ask: PendingAskUser }
+  | { type: "ask.closed"; askId: string; reason: AskUserCloseReason }
   | { type: "session.name"; sessionId: string; name?: string }
   | { type: "session.created"; session: SessionInfo }
   | { type: "pi.event"; eventType: string };

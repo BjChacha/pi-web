@@ -958,6 +958,7 @@ function parsePiWebConfigValues(value: unknown): PiWebConfigValues {
     ...optionalField("agent", optionalAgent(record["agent"])),
     ...optionalField("spawnSessions", optionalBoolean(record, "spawnSessions")),
     ...optionalField("subsessions", optionalBoolean(record, "subsessions")),
+    ...optionalField("askUser", optionalBoolean(record, "askUser")),
   };
 }
 
@@ -1038,6 +1039,8 @@ function parsePiWebConfigEnvOverrides(value: unknown): PiWebConfigEnvOverrides {
     allowedHosts: requireBoolean(record, "allowedHosts"),
     spawnSessions: requireBoolean(record, "spawnSessions"),
     subsessions: requireBoolean(record, "subsessions"),
+    // Older servers predate the ask_user tool; a missing flag means "not overridden".
+    askUser: optionalBoolean(record, "askUser") ?? false,
     agentCommand: optionalBoolean(record, "agentCommand") ?? false,
     agentDir: optionalBoolean(record, "agentDir") ?? false,
     ...optionalAgentDirSource(record),
