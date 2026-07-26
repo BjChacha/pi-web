@@ -33,8 +33,11 @@ import { deterministicSessionName, fallbackSessionName, generateShortSessionName
 import { computeEditPreview, type EditPreviewResult } from "./editPreview.js";
 import { attachmentsToInlineImages, saveAttachmentsToWorkspace } from "./attachmentService.js";
 import { parsePromptAttachments } from "../../shared/promptAttachments.js";
-import { SESSION_TREE_CUSTOM_INSTRUCTIONS_MAX_LENGTH, SESSION_UNREAD_LIMIT } from "../../shared/apiTypes.js";
+import { ASK_USER_ANSWERS_CUSTOM_TYPE, SESSION_TREE_CUSTOM_INSTRUCTIONS_MAX_LENGTH, SESSION_UNREAD_LIMIT } from "../../shared/apiTypes.js";
 import type {
+  AskUserCloseResponse,
+  AskUserOutcome,
+  AskUserSubmission,
   SavedPromptAttachment,
   SessionBulkArchiveResponse,
   SessionBulkDeleteArchivedResponse,
@@ -55,7 +58,7 @@ import { type AuthChange } from "./authService.js";
 import { canonicalizeStoredCwd, cwdPathsEqual } from "../workingDirectory.js";
 import type { WorkspaceActivityService } from "../activity/workspaceActivityService.js";
 import { createAskUserToolDefinition, type AskUserInvocation, type AskUserToolDeps } from "./askUserTool.js";
-import { PendingAskStore, type PendingAskOpenResult } from "./pendingAskStore.js";
+import { PendingAskStore, renderAskUserAnswersText, type PendingAskCloseResult, type PendingAskOpenResult } from "./pendingAskStore.js";
 import { createSpawnSessionToolDefinition, type SpawnSessionInvocation, type SpawnSessionResult } from "./spawnSessionTool.js";
 import { createSubsessionToolDefinitions, type SpawnSubsessionInvocation, type SpawnSubsessionResult, type SubsessionCheckResult, type SubsessionReadQuery, type SubsessionReadResult, type SubsessionStatus, type SubsessionSummary, type SubsessionToolDeps } from "./spawnSubsessionTool.js";
 import { buildTranscriptView } from "./subsessionTranscript.js";
@@ -952,7 +955,10 @@ export class PiSessionService implements SessionRouteService {
     const pendingOpens = this.pendingSessionOpenPromises();
     if (pendingOpens.length > 0) await Promise.allSettled(pendingOpens);
     const activeSessions = Array.from(new Set(this.active.values()));
-    for (const active of activeSessions) this.forgetUnreadActivity(active.runtime.session);
+    for (const active of activeSessions) {
+      this.forgetUnreadActivity(active.runtime.session);
+      this.pendingAskStore.forgetSession(active.runtime.session.sessionId);
+    }
     this.active.clear();
     this.pendingSessionOpens.clear();
     this.activities.clear();
@@ -1096,7 +1102,73 @@ export class PiSessionService implements SessionRouteService {
    */
   // eslint-disable-next-line @typescript-eslint/require-await -- async so a rejected question set becomes a rejection rather than a synchronous throw from a promise-returning method.
   async openAsk(input: AskUserInvocation): Promise<PendingAskOpenResult> {
-    return this.pendingAskStore.open(input);
+    const result = this.pendingAskStore.open(input);
+    // A supersede closes the earlier ask, so the browsers watching it must hear
+    // that before they hear about its replacement.
+    if (result.superseded !== undefined) this.publishAskClosed(input.sessionId, result.superseded);
+    this.events.publish(input.sessionId, { type: "ask.opened", ask: result.ask });
+    this.publishStatusForSessionId(input.sessionId);
+    return result;
+  }
+
+  /**
+   * Record the user's answers to the session's open ask and hand them to the
+   * model. The answers travel as a system-authored custom message rather than a
+   * user message, so they are not attributed to the human in the transcript;
+   * they still wake an idle session (`triggerTurn`) and queue behind in-flight
+   * work (`deliverAs: "followUp"`), which is how the run that `ask_user`
+   * terminated continues.
+   */
+  async submitAsk(ref: PiSessionLookup, askId: string, submission: AskUserSubmission): Promise<AskUserCloseResponse> {
+    await this.assertWritable(ref);
+    const session = await this.getOrOpen(ref);
+    // Checked before the store closes the ask so a refused delivery cannot
+    // discard answers the user already submitted.
+    this.assertTreeNavigationInactive(session, "answer questions");
+    return this.closeAsk(session, this.pendingAskStore.submit(session.sessionId, askId, submission));
+  }
+
+  /**
+   * Close the open ask without answers. The model is still told, naming every
+   * question as unanswered: it was promised a follow-up message and would
+   * otherwise wait for one that never comes.
+   */
+  async cancelAsk(ref: PiSessionLookup, askId: string): Promise<AskUserCloseResponse> {
+    await this.assertWritable(ref);
+    const session = await this.getOrOpen(ref);
+    this.assertTreeNavigationInactive(session, "dismiss questions");
+    return this.closeAsk(session, this.pendingAskStore.cancel(session.sessionId, askId));
+  }
+
+  /**
+   * Publish and deliver a closed ask. A stale close is reported rather than
+   * thrown: losing the race against a supersede, another browser, or a session
+   * that went away is ordinary, and the returned status tells the browser what
+   * the session's open ask is now.
+   */
+  private async closeAsk(session: PiAgentSession, result: PendingAskCloseResult): Promise<AskUserCloseResponse> {
+    if (result.status === "stale") return { result: "stale", sessionStatus: this.statusFromSession(session) };
+    const { outcome } = result;
+    this.publishAskClosed(session.sessionId, outcome);
+    await this.runSessionEntryMutation(session, "deliver answers to your questions", () => session.sendCustomMessage(
+      { customType: ASK_USER_ANSWERS_CUSTOM_TYPE, content: renderAskUserAnswersText(outcome), display: true, details: outcome },
+      { triggerTurn: true, deliverAs: "followUp" },
+    ));
+    this.publishStatus(session);
+    return { result: "closed", outcome, sessionStatus: this.statusFromSession(session) };
+  }
+
+  private publishAskClosed(sessionId: string, outcome: AskUserOutcome): void {
+    this.events.publish(sessionId, { type: "ask.closed", askId: outcome.askId, reason: outcome.reason });
+  }
+
+  /**
+   * Publish status for a session known only by id, as the ask tools are: they
+   * run inside the session's own runtime, so the active entry is the session.
+   */
+  private publishStatusForSessionId(sessionId: string): void {
+    const session = this.active.get(sessionId)?.runtime.session;
+    if (session !== undefined) this.publishStatus(session);
   }
 
   /** Summaries of the tracked subsessions spawned by `parentSessionId`. */
@@ -2251,6 +2323,9 @@ export class PiSessionService implements SessionRouteService {
     }
     if (!active) return;
     this.forgetUnreadActivity(active.runtime.session);
+    // An open ask is meaningful only while the runtime that posted it exists: no
+    // one is left to receive the answers, so it is dropped without an outcome.
+    this.pendingAskStore.forgetSession(sessionId);
     this.active.delete(sessionId);
     this.activities.delete(sessionId);
     this.workspaceActivity?.removeSession(sessionId, active.runtime.session.sessionManager.getCwd());
@@ -3107,6 +3182,7 @@ export class PiSessionService implements SessionRouteService {
     const model = session.model === undefined ? undefined : modelToClientModel(session.model);
     const contextUsage = session.getContextUsage();
     const warnings = this.warningsForSession(session);
+    const pendingAsk = this.pendingAskStore.pendingAsk(session.sessionId);
     return {
       sessionId: session.sessionId,
       persisted: sessionFileExists(session.sessionFile),
@@ -3122,6 +3198,7 @@ export class PiSessionService implements SessionRouteService {
       cost: stats.cost,
       ...(contextUsage === undefined ? {} : { contextUsage }),
       ...(warnings.length === 0 ? {} : { warnings }),
+      ...(pendingAsk === undefined ? {} : { pendingAsk }),
     };
   }
 

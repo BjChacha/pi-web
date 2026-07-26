@@ -440,6 +440,12 @@ export interface QueuedSessionMessage {
   text: string;
 }
 
+/**
+ * `customType` of the follow-up custom message that carries a closed ask back to
+ * the model and into the transcript. Its `details` are an {@link AskUserOutcome}.
+ */
+export const ASK_USER_ANSWERS_CUSTOM_TYPE = "pi-web.ask.answers";
+
 /** Largest question set one `ask_user` call may post. */
 export const ASK_USER_QUESTION_LIMIT = 20;
 /** Largest option list one question may offer. */
@@ -542,6 +548,21 @@ export interface AskUserOutcome {
   unansweredIds: string[];
   /** One line, for example `Answered 3 of 5; unanswered: q2, q5`. */
   summary: string;
+}
+
+/**
+ * Result of the browser closing an ask by submitting or cancelling it.
+ *
+ * `"stale"` is an ordinary race rather than an error: the named ask was already
+ * submitted, superseded by a newer one, or gone with its session runtime. The
+ * browser drops its card and trusts `sessionStatus`, which is returned in both
+ * cases so closing an ask needs no follow-up status request.
+ */
+export interface AskUserCloseResponse {
+  result: "closed" | "stale";
+  /** Present only when this call is the one that closed the ask. */
+  outcome?: AskUserOutcome;
+  sessionStatus: SessionStatus;
 }
 
 /**

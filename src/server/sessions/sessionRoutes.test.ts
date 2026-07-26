@@ -2,8 +2,10 @@ import { resolve } from "node:path";
 import Fastify, { type FastifyInstance } from "fastify";
 import fastifyWebsocket from "@fastify/websocket";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { SESSION_TREE_CUSTOM_INSTRUCTIONS_MAX_LENGTH, SESSION_UNREAD_CATALOG_ID_MAX_LENGTH } from "../../shared/apiTypes.js";
+import { ASK_USER_ID_MAX_LENGTH, ASK_USER_OTHER_TEXT_MAX_LENGTH, ASK_USER_QUESTION_LIMIT, SESSION_TREE_CUSTOM_INSTRUCTIONS_MAX_LENGTH, SESSION_UNREAD_CATALOG_ID_MAX_LENGTH } from "../../shared/apiTypes.js";
 import type {
+  AskUserCloseResponse,
+  AskUserSubmission,
   MessagePage,
   SessionBulkArchiveResponse,
   SessionBulkDeleteArchivedResponse,
@@ -331,6 +333,100 @@ describe("session routes", () => {
         expect(response.statusCode).toBe(400);
       }
       expect(routeService.navigateTreeCalls).toEqual([]);
+    } finally {
+      await routeService.dispose();
+      await routeApp.close();
+    }
+  });
+
+  it("parses ask submissions and reports both closed and stale outcomes", async () => {
+    const routeApp = Fastify({ logger: false });
+    await routeApp.register(fastifyWebsocket);
+    const eventHub = new SessionEventHub();
+    const routeService = new CapturingRouteSessionService();
+    registerSessionRoutes(routeApp, routeService, eventHub);
+
+    try {
+      const submitted = await routeApp.inject({
+        method: "POST",
+        url: "/sessions/session-1/ask/submit",
+        payload: {
+          cwd: "/repo/./",
+          askId: "ask-1",
+          answers: [{ id: "db", values: ["pg"] }, { id: "cache", values: [], otherText: "redis" }],
+        },
+      });
+      const cancelled = await routeApp.inject({
+        method: "POST",
+        url: "/sessions/session-1/ask/cancel",
+        payload: { askId: "ask-2" },
+      });
+
+      expect(submitted.statusCode).toBe(200);
+      expect(submitted.json()).toMatchObject({ result: "closed", sessionStatus: { sessionId: "session-1" } });
+      expect(routeService.submitAskCalls).toEqual([{
+        lookup: { id: "session-1", cwd: resolve("/repo") },
+        askId: "ask-1",
+        submission: { answers: [{ id: "db", values: ["pg"] }, { id: "cache", values: [], otherText: "redis" }] },
+      }]);
+      expect(cancelled.statusCode).toBe(200);
+      expect(cancelled.json()).toMatchObject({ result: "stale" });
+      expect(routeService.cancelAskCalls).toEqual([{ lookup: "session-1", askId: "ask-2" }]);
+    } finally {
+      await routeService.dispose();
+      await routeApp.close();
+    }
+  });
+
+  it("rejects malformed ask payloads before calling the service", async () => {
+    const routeApp = Fastify({ logger: false });
+    await routeApp.register(fastifyWebsocket);
+    const eventHub = new SessionEventHub();
+    const routeService = new CapturingRouteSessionService();
+    registerSessionRoutes(routeApp, routeService, eventHub);
+    const malformed: Record<string, unknown>[] = [
+      { answers: [] },
+      { askId: "", answers: [] },
+      { askId: "x".repeat(ASK_USER_ID_MAX_LENGTH + 1), answers: [] },
+      { askId: "ask-1" },
+      { askId: "ask-1", answers: {} },
+      { askId: "ask-1", answers: [{ values: ["pg"] }] },
+      { askId: "ask-1", answers: [{ id: "db" }] },
+      { askId: "ask-1", answers: [{ id: "db", values: [1] }] },
+      { askId: "ask-1", answers: [{ id: "db", values: [], otherText: 7 }] },
+      { askId: "ask-1", answers: [{ id: "db", values: [], otherText: "x".repeat(ASK_USER_OTHER_TEXT_MAX_LENGTH + 1) }] },
+      { askId: "ask-1", answers: new Array<unknown>(ASK_USER_QUESTION_LIMIT + 1).fill({ id: "db", values: [] }) },
+    ];
+
+    try {
+      for (const payload of malformed) {
+        const response = await routeApp.inject({ method: "POST", url: "/sessions/session-1/ask/submit", payload });
+        expect(response.statusCode).toBe(400);
+      }
+      const cancelWithoutAskId = await routeApp.inject({ method: "POST", url: "/sessions/session-1/ask/cancel", payload: {} });
+
+      expect(cancelWithoutAskId.statusCode).toBe(400);
+      expect(routeService.submitAskCalls).toEqual([]);
+      expect(routeService.cancelAskCalls).toEqual([]);
+    } finally {
+      await routeService.dispose();
+      await routeApp.close();
+    }
+  });
+
+  it("maps a missing session on an ask submission to 404", async () => {
+    const routeApp = Fastify({ logger: false });
+    await routeApp.register(fastifyWebsocket);
+    const eventHub = new SessionEventHub();
+    const routeService = new CapturingRouteSessionService();
+    routeService.askError = new Error("Session not found");
+    registerSessionRoutes(routeApp, routeService, eventHub);
+
+    try {
+      const response = await routeApp.inject({ method: "POST", url: "/sessions/session-1/ask/submit", payload: { askId: "ask-1", answers: [] } });
+
+      expect(response.statusCode).toBe(404);
+      expect(response.json()).toEqual({ error: "Session not found" });
     } finally {
       await routeService.dispose();
       await routeApp.close();
@@ -706,8 +802,23 @@ class CapturingRouteSessionService implements SessionRouteService {
   readonly bulkArchiveCalls: SessionBulkMutationRef[][] = [];
   readonly bulkDeleteCalls: SessionBulkMutationRef[][] = [];
   readonly navigateTreeCalls: { lookup: SessionRouteLookup; request: SessionTreeNavigateRequest }[] = [];
+  readonly submitAskCalls: { lookup: SessionRouteLookup; askId: string; submission: AskUserSubmission }[] = [];
+  readonly cancelAskCalls: { lookup: SessionRouteLookup; askId: string }[] = [];
+  askError: Error | undefined;
   reloadError: Error | undefined;
   clearQueueError: Error | undefined;
+
+  submitAsk(lookup: SessionRouteLookup, askId: string, submission: AskUserSubmission): Promise<AskUserCloseResponse> {
+    if (this.askError !== undefined) return Promise.reject(this.askError);
+    this.submitAskCalls.push({ lookup, askId, submission });
+    return Promise.resolve({ result: "closed", sessionStatus: idleStatus(lookup) });
+  }
+
+  cancelAsk(lookup: SessionRouteLookup, askId: string): Promise<AskUserCloseResponse> {
+    if (this.askError !== undefined) return Promise.reject(this.askError);
+    this.cancelAskCalls.push({ lookup, askId });
+    return Promise.resolve({ result: "stale", sessionStatus: idleStatus(lookup) });
+  }
 
   cleanupPreview(request: NormalizedSessionCleanupRequest): Promise<SessionCleanupPreviewResponse> {
     this.cleanupPreviewCalls.push(request);
@@ -898,6 +1009,19 @@ function notificationSnapshot(ref: SessionRef): SessionNotificationInboxSnapshot
     summary: { sessionId: ref.id, cwd: ref.cwd, inboxRevision: 0, retainedCount: 0, discardedCount: 0 },
     notifications: [],
     dismissThrough: { order: 0, overflowWatermark: 0 },
+  };
+}
+
+function idleStatus(lookup: SessionRouteLookup): SessionStatus {
+  return {
+    sessionId: sessionIdFromLookup(lookup),
+    isStreaming: false,
+    isCompacting: false,
+    isBashRunning: false,
+    pendingMessageCount: 0,
+    queuedMessages: [],
+    tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    cost: 0,
   };
 }
 
