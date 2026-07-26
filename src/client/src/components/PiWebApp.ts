@@ -435,6 +435,7 @@ export class PiWebApp extends LitElement {
       this.sessions.refreshSelectedSession(),
       this.refreshMachineActivities(),
       this.refreshWorkspaceDeletionRuns(),
+      this.workspaces.refreshSelectedProjectTopology(),
     ]);
   }
 
@@ -492,6 +493,7 @@ export class PiWebApp extends LitElement {
         this.loadClientConfig(),
         this.refreshWorkspaceDeletionRuns(),
         this.refreshCurrentWorkspaceSurface(),
+        this.workspaces.refreshSelectedProjectTopology(),
       ]);
       this.schedulePiWebStatusRefresh();
     } finally {
