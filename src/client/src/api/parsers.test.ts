@@ -289,18 +289,18 @@ describe("API parsers", () => {
     })).toThrow("positive safe integer");
   });
 
-  it("parses session startup progress with and without a wait detail", () => {
+  it("parses session startup progress with and without a correlation token", () => {
     const activity = { sessionId: "session-1", phase: "active", label: "Creating session", detail: "Starting the Pi session", at: "2026-07-20T00:00:01.000Z" };
 
-    expect(parseSessionStartupProgressEvent({ type: "session.startup", cwd: "/repo", activity })).toEqual({
+    expect(parseSessionStartupProgressEvent({ type: "session.startup", startupToken: "pending-session-1-abc", activity })).toEqual({
       type: "session.startup",
-      cwd: "/repo",
+      startupToken: "pending-session-1-abc",
       activity,
     });
+    // An open carries no token: the activity's own session id is the only route.
     const idle = { sessionId: "session-1", phase: "idle", label: "idle", at: "2026-07-20T00:00:02.000Z" };
-    expect(parseSessionStartupProgressEvent({ type: "session.startup", cwd: "/repo", activity: idle })).toEqual({
+    expect(parseSessionStartupProgressEvent({ type: "session.startup", activity: idle })).toEqual({
       type: "session.startup",
-      cwd: "/repo",
       activity: idle,
     });
   });
@@ -308,15 +308,17 @@ describe("API parsers", () => {
   it("rejects session startup progress that cannot be routed or rendered honestly", () => {
     const activity = { sessionId: "session-1", phase: "active", label: "Creating session", at: "2026-07-20T00:00:01.000Z" };
 
-    expect(() => parseSessionStartupProgressEvent({ type: "activity.update", cwd: "/repo", activity })).toThrow("Invalid session startup event type");
-    expect(() => parseSessionStartupProgressEvent({ type: "session.startup", activity })).toThrow("Expected string field: cwd");
-    expect(() => parseSessionStartupProgressEvent({ type: "session.startup", cwd: "", activity })).toThrow("Expected non-empty string field: cwd");
-    expect(() => parseSessionStartupProgressEvent({ type: "session.startup", cwd: "/repo" })).toThrow("Expected object response");
-    expect(() => parseSessionStartupProgressEvent({ type: "session.startup", cwd: "/repo", activity: { ...activity, phase: "waiting" } })).toThrow("Expected session activity phase field: phase");
-    expect(() => parseSessionStartupProgressEvent({ type: "session.startup", cwd: "/repo", activity: { ...activity, label: 7 } })).toThrow("Expected string field: label");
-    expect(() => parseSessionStartupProgressEvent({ type: "session.startup", cwd: "/repo", activity: { ...activity, label: "" } })).toThrow("Expected non-empty string field: label");
-    expect(() => parseSessionStartupProgressEvent({ type: "session.startup", cwd: "/repo", activity: { ...activity, detail: 7 } })).toThrow("Expected optional string field: detail");
-    expect(() => parseSessionStartupProgressEvent({ type: "session.startup", cwd: "/repo", activity: { ...activity, sessionId: "" } })).toThrow("Expected non-empty string field: sessionId");
+    expect(() => parseSessionStartupProgressEvent({ type: "activity.update", activity })).toThrow("Invalid session startup event type");
+    expect(() => parseSessionStartupProgressEvent({ type: "session.startup" })).toThrow("Expected object response");
+    expect(() => parseSessionStartupProgressEvent({ type: "session.startup", startupToken: 7, activity })).toThrow("Expected optional string field: startupToken");
+    // An empty token would match nothing but must still be rejected rather than
+    // silently carried, so a malformed frame never reaches the routing at all.
+    expect(() => parseSessionStartupProgressEvent({ type: "session.startup", startupToken: "", activity })).toThrow("Expected non-empty string field: startupToken");
+    expect(() => parseSessionStartupProgressEvent({ type: "session.startup", activity: { ...activity, phase: "waiting" } })).toThrow("Expected session activity phase field: phase");
+    expect(() => parseSessionStartupProgressEvent({ type: "session.startup", activity: { ...activity, label: 7 } })).toThrow("Expected string field: label");
+    expect(() => parseSessionStartupProgressEvent({ type: "session.startup", activity: { ...activity, label: "" } })).toThrow("Expected non-empty string field: label");
+    expect(() => parseSessionStartupProgressEvent({ type: "session.startup", activity: { ...activity, detail: 7 } })).toThrow("Expected optional string field: detail");
+    expect(() => parseSessionStartupProgressEvent({ type: "session.startup", activity: { ...activity, sessionId: "" } })).toThrow("Expected non-empty string field: sessionId");
   });
 
   it("parses session cleanup preview and execute responses", () => {

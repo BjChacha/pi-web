@@ -199,6 +199,11 @@ type SessionCreationProvenance = "tracked-subsession";
 interface StartSessionOptions {
   parentSession?: string;
   initialModel?: AgentModel;
+  /**
+   * Opaque label, echoed on this construction's startup progress so a browser
+   * row with no session id yet can recognise its own.
+   */
+  startupToken?: string;
 }
 
 interface InternalStartSessionOptions extends StartSessionOptions {
@@ -390,7 +395,7 @@ interface PendingSessionOpen {
   promise: Promise<ActiveSession<PiSessionRuntime>>;
 }
 
-interface CreateSessionRuntimeOptions extends Pick<InternalStartSessionOptions, "initialModel" | "creationProvenance"> {
+interface CreateSessionRuntimeOptions extends Pick<InternalStartSessionOptions, "initialModel" | "creationProvenance" | "startupToken"> {
   notificationGeneration?: SessionNotificationGeneration;
   notifications?: "enabled" | "disabled";
   /**
@@ -992,6 +997,7 @@ export class PiSessionService implements SessionRouteService {
       cwd,
       {
         startupIntent: "create",
+        ...(options.startupToken === undefined ? {} : { startupToken: options.startupToken }),
         ...(options.initialModel === undefined ? {} : { initialModel: options.initialModel }),
         ...(options.creationProvenance === undefined ? {} : { creationProvenance: options.creationProvenance }),
       },
@@ -2353,7 +2359,7 @@ export class PiSessionService implements SessionRouteService {
     cwd: string,
     options: CreateSessionRuntimeOptions = {},
   ): Promise<ActiveSession<PiSessionRuntime>> {
-    const startup = this.startupProgress(sessionManager, cwd, options.startupIntent ?? "open");
+    const startup = this.startupProgress(sessionManager, options.startupIntent ?? "open", options.startupToken);
     try {
       return await this.createSessionRuntime(sessionManager, cwd, options, startup);
     } finally {
@@ -2999,23 +3005,23 @@ export class PiSessionService implements SessionRouteService {
   /**
    * Build the reporter for one session construction.
    *
-   * The session id and cwd are both known before any await — a `SessionManager`
-   * has its id from construction — so the daemon can name what it is starting
-   * even though the `PiAgentSession` that {@link publishActivity} needs does not
-   * exist yet. When either is missing there is nothing honest to route on, so
-   * the reporter stays silent and the browser keeps its own generic wording.
+   * The session id is known before any await — a `SessionManager` has its id
+   * from construction — so the daemon can name what it is starting even though
+   * the `PiAgentSession` that {@link publishActivity} needs does not exist yet.
+   * Without an id there is nothing to report against, so the reporter stays
+   * silent and the browser keeps its own generic wording.
    */
-  private startupProgress(sessionManager: PiSessionManager, cwd: string, intent: "create" | "open"): SessionStartupProgressReporter {
+  private startupProgress(sessionManager: PiSessionManager, intent: "create" | "open", startupToken: string | undefined): SessionStartupProgressReporter {
     const sessionId = sessionManager.getSessionId();
-    if (sessionId === "" || cwd === "") return { report: noop, end: noop };
+    if (sessionId === "") return { report: noop, end: noop };
     const label = intent === "create" ? "Creating session" : "Opening session";
     return {
-      report: (phase) => { this.publishStartupProgress(sessionId, cwd, label, "active", this.startupDetail(phase)); },
+      report: (phase) => { this.publishStartupProgress(sessionId, startupToken, label, "active", this.startupDetail(phase)); },
       end: () => {
         // A real activity published during the window (an extension error, say)
         // is the truth about this session and must survive the clear.
         if (this.activities.has(sessionId)) return;
-        this.publishStartupProgress(sessionId, cwd, "idle", "idle", undefined);
+        this.publishStartupProgress(sessionId, startupToken, "idle", "idle", undefined);
       },
     };
   }
@@ -3027,17 +3033,17 @@ export class PiSessionService implements SessionRouteService {
   }
 
   /**
-   * Report startup progress on the global channel only, keyed by `cwd` so a
-   * browser row that has no session id yet can find it.
+   * Report startup progress on the global channel only, echoing the caller's
+   * correlation token so a waiting browser row recognises its own construction.
    *
    * Unlike {@link publishActivity} this deliberately records nothing: no
    * `activities` entry, no workspace activity, no unread observation. There is
    * no session to own that state, and a failed creation would leave it stranded.
    */
-  private publishStartupProgress(sessionId: string, cwd: string, label: string, phase: "active" | "idle", detail: string | undefined): void {
+  private publishStartupProgress(sessionId: string, startupToken: string | undefined, label: string, phase: "active" | "idle", detail: string | undefined): void {
     const at = new Date().toISOString();
     const activity = detail === undefined ? { sessionId, phase, label, at } : { sessionId, phase, label, detail, at };
-    this.events.publishGlobal({ type: "session.startup", cwd, activity });
+    this.events.publishGlobal(startupToken === undefined ? { type: "session.startup", activity } : { type: "session.startup", startupToken, activity });
   }
 
   private publishActivity(session: PiAgentSession, label: string, phase: "active" | "idle" | "error", detail?: string): void {
