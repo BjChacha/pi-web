@@ -11,8 +11,6 @@ export interface GitWorktreeInfo {
   detached?: boolean;
   /** Git reports a linked worktree as prunable when its checkout directory no longer exists. */
   prunable?: boolean;
-  /** Git reports a locked worktree with a bare `locked` line, optionally followed by a reason. */
-  locked?: boolean;
 }
 
 export async function isGitRepository(path: string): Promise<boolean> {
@@ -46,7 +44,6 @@ export function parseGitWorktreeList(stdout: string): GitWorktreeInfo[] {
       if (key === "bare") info.bare = true;
       if (key === "detached") info.detached = true;
       if (key === "prunable") info.prunable = true;
-      if (key === "locked") info.locked = true;
     }
     return info;
   }).filter((w) => w.path);

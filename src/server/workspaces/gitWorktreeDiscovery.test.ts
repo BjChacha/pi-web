@@ -38,15 +38,17 @@ describe("parseGitWorktreeList", () => {
     ]);
   });
 
-  it("reports prunable with its reason and locked with or without a reason", () => {
+  it("reports prunable, and leaves a locked worktree looking like the usable checkout it is", () => {
     expect(parseGitWorktreeList(removedAndLocked)).toEqual([
       { path: "/repo", branch: "main" },
       { path: "/repo-worktrees/gone", branch: "gone", prunable: true },
-      { path: "/repo-worktrees/kept", branch: "kept", locked: true },
+      // `locked` is ignored: a locked worktree is a real checkout and stays a usable
+      // workspace, so nothing downstream needs to distinguish it.
+      { path: "/repo-worktrees/kept", branch: "kept" },
     ]);
 
     const bareLocked = ["worktree /repo-worktrees/kept", "HEAD abc", "detached", "locked", ""].join("\n");
-    expect(parseGitWorktreeList(bareLocked)).toEqual([{ path: "/repo-worktrees/kept", detached: true, locked: true }]);
+    expect(parseGitWorktreeList(bareLocked)).toEqual([{ path: "/repo-worktrees/kept", detached: true }]);
   });
 
   it("reads bare repositories and ignores chunks without a worktree path", () => {

@@ -31,10 +31,10 @@ describe("WorkspaceService.list", () => {
     expect(workspaces.map((workspace) => workspace.path)).toEqual(["/repo", "/repo-worktrees/live"]);
   });
 
-  it("keeps a locked worktree, which is still a real checkout", async () => {
+  it("keeps a worktree that is present but not prunable, such as a locked one", async () => {
     const service = serviceFor([
       { path: "/repo", branch: "main" },
-      { path: "/repo-worktrees/kept", branch: "kept", locked: true },
+      { path: "/repo-worktrees/kept", branch: "kept" },
     ]);
 
     const workspaces = await service.list(project);
