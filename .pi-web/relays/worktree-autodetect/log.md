@@ -195,3 +195,81 @@ git status, open diff, terminal selection).
 
 **Yes.** Packet committed, `status.md` un-parked with the decisions recorded, leg 1
 dispatched via `spawn_session`.
+
+---
+
+## Leg 1 — Stop reporting removed worktrees (server truth)
+
+**Commit:** `266f941` — `fix(workspaces): hide worktrees whose checkout directory is gone`
+
+### What I did
+
+1. **Parser reports facts.** `src/server/workspaces/gitWorktreeDiscovery.ts` now reads the
+   `prunable` and `locked` keys. Extracted the pure parsing step into an exported
+   `parseGitWorktreeList(stdout)`; `discoverGitWorktrees` is now just the `execFile`
+   boundary plus that call. `GitWorktreeInfo` gained optional `prunable` / `locked`.
+2. **Service decides policy.** `src/server/workspaces/workspaceService.ts` filters prunable
+   linked worktrees in a small private `selectable()` step, keeping the entry whose path
+   equals `project.path` unconditionally. Existing "no worktrees" fallback then also covers
+   the case where every listed worktree was filtered away, so a project can never present
+   an empty workspace list.
+3. **Injected the git boundary.** `WorkspaceService` now takes an optional
+   `WorkspaceGitPort` (`{ isGitRepository, discoverGitWorktrees }`) defaulting to the real
+   implementation. This is what made the policy testable without a real repo or a
+   subclass-override fake, and it left every existing `new WorkspaceService()` call site
+   (`app.ts`, `app.testSupport.ts`, `sessiond.ts`) untouched.
+4. **Two new test files** (the plan predicted one; the policy assertions belong next to the
+   service that owns them, not next to the parser):
+   - `gitWorktreeDiscovery.test.ts` — parser only, fixtures captured verbatim from real git.
+   - `workspaceService.test.ts` — prunable hidden, locked kept, project path kept even when
+     marked prunable, fallback when everything is filtered, plus pre-existing labeling and
+     non-git behavior pinned so leg 2/3 have a regression net.
+
+### Decisions and why
+
+- **Facts in the parser, policy in the service**, as `plan.md` preferred. The words
+  `prunable` and `project.path` now appear in exactly one place each.
+- **Constructor injection rather than subclass-override fakes.** `workspaceDeletionRoutes.test.ts`
+  fakes `WorkspaceService` by subclassing and overriding `list()`, which cannot test `list()`
+  itself. A narrow port is the smaller seam and keeps the production default unchanged.
+- **Read-only, as mandated.** No `git worktree prune`, no repo metadata mutation anywhere.
+- **`locked` is parsed but deliberately not acted on.** A locked worktree is a real checkout
+  and stays selectable. It is surfaced now because git emits it in the same records and
+  future UI may want it; adding it later would mean touching the parser again.
+- **Re-verified the git behavior** rather than trusting it: created a throwaway repo,
+  `rm -rf`'d a linked worktree and locked another. Confirmed `prunable gitdir file points to
+  non-existent location` and `locked keep me`. Test fixtures are that exact output. Probe
+  repo deleted afterwards.
+- **No API/type change.** `prunable`/`locked` never leave the server, so the shared
+  `Workspace` type and the client are untouched. Leg 2 needs no type work.
+
+### Checks run
+
+- `npm test -- --run src/server/workspaces/gitWorktreeDiscovery.test.ts src/server/workspaces/workspaceService.test.ts` → 10 passed
+- `npm test -- --run src/server/workspaces/` → 12 files, 88 passed
+- `npm test -- --run src/server/app.projects.test.ts` → 5 passed (workspace list route contract)
+- `npm run typecheck` → clean
+- `npx eslint` on all four changed files → clean
+- pre-commit `verify:staged` → cached typecheck, knip, eslint, 14 related test files / 63 tests, all green
+
+`npm run verify` was not run; per `plan.md` that is leg 3's gate.
+
+### Artifacts changed
+
+- `src/server/workspaces/gitWorktreeDiscovery.ts` (modified)
+- `src/server/workspaces/workspaceService.ts` (modified)
+- `src/server/workspaces/gitWorktreeDiscovery.test.ts` (new)
+- `src/server/workspaces/workspaceService.test.ts` (new)
+- `status.md` (leg tracking → last completed 1 / next 2, next task set to leg 2, added a
+  note about the new `WorkspaceGitPort` seam)
+
+No changeset yet — charter allows it any time up to leg 3, and leg 3 owns one fragment for
+the whole user-visible behavior.
+
+### Blockers
+
+None. Nothing ambiguous, no design decision needed, no intervention trigger fired.
+
+### Handing off?
+
+**Yes.** Work committed, packet updated, leg 2 dispatched via `spawn_session`.

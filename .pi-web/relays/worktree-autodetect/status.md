@@ -3,32 +3,39 @@
 ## ✅ APPROVED — relay is live
 
 The human approved the reduced scope in leg 0 and answered every open question. There are
-no outstanding decisions. Run leg 1.
+no outstanding decisions. Run leg 2.
 
 ## Current position
 
-Leg 0 (assessment/design) is complete. No production code has been written.
+Leg 1 is complete and committed (`266f941`). The **server** side of the feature is done:
+prunable worktrees are no longer reported as workspaces. Nothing in the client has changed
+yet, so newly created worktrees still only appear on a full page load.
 
-The recommendation is **reduced scope**: detection piggybacked on browser resume, plus a
-fix for the inverse (removed-worktree) case. No watchers, no timers, no new processes,
-no new push channel. Rationale is in `log.md` leg 0; the implementation breakdown is in
-`plan.md`.
+The design remains reduced scope: detection piggybacked on browser resume. No watchers,
+no timers, no new processes, no new push channel. Breakdown is in `plan.md`.
 
 ## Leg tracking
 
-- **Last completed leg:** 0 (assessment and packet creation)
-- **Next leg to run:** 1
+- **Last completed leg:** 1 (server: hide removed worktrees)
+- **Next leg to run:** 2
 
-## Next task — leg 1
+## Next task — leg 2
 
-Stop reporting worktrees whose checkout directory has been removed outside PI WEB.
+Non-disruptive workspace topology refresh in the client.
 
-See `plan.md` → "Leg 1". Summary: teach the `git worktree list --porcelain` parser about
-the `prunable` and `locked` keys, exclude prunable linked worktrees from the workspace
-list, never filter the main worktree, never mutate the repo (no `git worktree prune`).
+See `plan.md` → "Leg 2" and **read it fully before writing the method** — it spells out the
+plausible-looking wrong implementation and exactly why it is destructive. Summary: add
+`refreshSelectedProjectTopology()` to `WorkspaceController` that re-lists the selected
+project's workspaces and applies them through `applyProjectWorkspaces` **only** — never
+through `selectWorkspace`, which has no already-selected guard and would clear the active
+session and all workspace-scoped state on every alt-tab. Guard against machine/project
+changing mid-flight; `console.warn` on failure, never `setState({ error })`.
 
-Files: `src/server/workspaces/gitWorktreeDiscovery.ts`, `src/server/workspaces/workspaceService.ts`,
-new `src/server/workspaces/gitWorktreeDiscovery.test.ts`.
+Files: `src/client/src/controllers/workspaceController.ts`,
+new `src/client/src/controllers/workspaceController.test.ts`.
+
+Do **not** wire anything into `PiWebApp` in leg 2 — that is leg 3, deliberately after the
+refresh is proven inert.
 
 ## Relevant context for the next runner
 
@@ -58,6 +65,13 @@ real git; do not re-derive them:
 - **Remote machines come for free.** `workspacesApi.workspaces(projectId, machineId)`
   routes through `machinePrefix`, and `GET /projects/:projectId/workspaces` is already in
   `FEDERATED_HTTP_ROUTES` in `src/shared/federatedRoutes.ts`. No transport work needed.
+- **Leg 1 shipped a seam leg 2 does not need but should know about.** `WorkspaceService`
+  now takes an optional `WorkspaceGitPort` (`{ isGitRepository, discoverGitWorktrees }`)
+  in its constructor, defaulting to the real git implementation, so workspace policy is
+  testable without a repo. `parseGitWorktreeList(stdout)` is exported from
+  `gitWorktreeDiscovery.ts` for pure parser tests. Server-side `Workspace` shape is
+  unchanged — `prunable`/`locked` live on `GitWorktreeInfo` only and never reach the API,
+  so the client needs no type changes.
 - **The danger is `selectWorkspace`.** It calls `clearActiveSession()` and
   `resetWorkspaceScopedState()`. A refresh must apply the new list via
   `applyProjectWorkspaces` **only**, and must not route through `selectWorkspace` when the
@@ -87,4 +101,6 @@ real git; do not re-derive them:
 
 ## Blockers
 
-None. Leg 1 is clear to run.
+None. Leg 2 is clear to run. The one thing to watch is leg 2's own intervention trigger:
+if the refresh cannot be made non-disruptive without visible UI churn, stop rather than
+working around it.
