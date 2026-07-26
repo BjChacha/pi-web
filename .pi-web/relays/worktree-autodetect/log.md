@@ -513,3 +513,68 @@ without that guard every browser focus would push a new object into state.
 
 None. No new timer, watcher, process, endpoint, or push channel; no sessiond code touched, so
 **no manual session daemon restart is required**. Branch still ready for review and merge.
+
+---
+
+## Post-relay — review nits 2 and 3 (locked flag, overlapping refreshes)
+
+Human asked to fix nit 2 and to fold in nit 3 if it belonged to the same group. It did:
+both are small, contained changes to code this branch already introduced, and neither adds a
+concept. Done as two commits because they are different concerns.
+
+### Nit 2 — `8f060d1` remove the unused `locked` flag
+
+I had defended keeping it in the previous review, arguing it documented the keep-locked
+policy. That was wrong on inspection: the *test input* documents the policy, not the field.
+Removed `GitWorktreeInfo.locked` and its parse line. The parser test still feeds a real
+`locked keep me` porcelain line and now asserts it is ignored, and the service test still
+pins that a present non-prunable worktree is kept. So the policy is covered with less surface,
+and unknown porcelain keys were already ignored anyway.
+
+### Nit 3 — `f8c3fdb` serialize overlapping topology refreshes
+
+**This was not the cosmetic nit I rated it. It was a correctness bug**, and probing it first
+is what revealed that. Scratch reproduction: two `refreshSelectedProjectTopology()` calls
+issued 2 HTTP requests; resolving the newer one first and the older one second left
+`state.workspaces` at the *older* list. So a worktree created outside PI WEB could appear and
+then vanish again, which is precisely the bug this whole branch exists to fix. The machine and
+project stale guards do not order responses.
+
+Fixed by routing the refresh through `TrailingRefreshCoordinator` keyed by
+`machineProjectKey(machineId, project.id)` — the primitive already used by
+`browserResumeController`, `sessionController`, and `activityController`, so this is reuse,
+not a new mechanism.
+
+**Learned mid-implementation:** the coordinator does *not* collapse overlapping calls into one
+request. It runs the second as a single trailing pass after the first finishes. My first test
+asserted `toHaveBeenCalledOnce()` and hung for 5s until the vitest timeout. The code was
+right and my assumption was wrong, so I rewrote the test to assert the real and stronger
+guarantee: max-in-flight is 1, and the last response applied is the newest. Recorded in
+`status.md` so the next person does not repeat the mistaken assertion.
+
+### Checks run
+
+- `npx vitest --run workspaceController.test.ts src/server/workspaces/` → **98 passed**
+  (10 in `workspaceController.test.ts`)
+- mutation check for nit 3: bypassed the coordinator by invoking the refresh body directly →
+  the new serialization test failed, **alone**; restored → all pass
+- `grep` for leftover `locked` references → only the intentional test input/comments
+- `npx eslint` on all four changed files → clean
+- **`npm run verify` → green**: 228 files, **1843 passed**, 2 skipped
+- pre-commit `verify:staged` on each commit → 14 files/63 tests and 6 files/27 tests, passed
+
+### Artifacts changed
+
+- `src/server/workspaces/gitWorktreeDiscovery.ts` (removed `locked` field + parse line)
+- `src/server/workspaces/gitWorktreeDiscovery.test.ts`,
+  `src/server/workspaces/workspaceService.test.ts` (retargeted to the policy, not the field)
+- `src/client/src/controllers/workspaceController.ts` (+`TrailingRefreshCoordinator`)
+- `src/client/src/controllers/workspaceController.test.ts` (+1 test, 10 total)
+- `status.md`: commit list, verify count, and the coordinator-semantics warning
+
+### Blockers
+
+None. No changeset added: `f8c3fdb` fixes a defect in unreleased work from this same branch,
+and the existing fragment already promises the list stays correct without user action. Still
+no timer, watcher, process, endpoint, or push channel, and no sessiond code touched, so
+**no manual session daemon restart is required**.

@@ -16,11 +16,24 @@ outside PI WEB showed the new name in the list and the old one in the collapsed 
 header and mobile context bar. Now re-pointed by id, and skipped entirely when metadata is
 unchanged so a normal resume does not churn identity. Two tests added (9 total in
 `workspaceController.test.ts`), each mutation-checked in both directions. `npm run verify`
-green: 1842 passed, 2 skipped.
+green: 1842 passed, 2 skipped (1843 after the two follow-up fixes below).
 
-Reviewed and deliberately left alone: `locked` is parsed but unconsumed (it documents the
-kept-worktree policy and is pinned by a `workspaceService` test), and the two refresh entry
-points are not deduped across each other (idempotent, stale-guarded, ~2ms).
+The other two review nits were then fixed as well, after the human asked:
+
+- `8f060d1` removed the unused `GitWorktreeInfo.locked` flag. The parser test still feeds a
+  real `locked` porcelain line and asserts it is ignored, so the keep-locked-worktrees policy
+  stays covered without a speculative field.
+- `f8c3fdb` fixed what turned out to be a **correctness bug, not the cosmetic nit I first
+  rated it**. The resume path and the plugin-facing app refresh call
+  `refreshSelectedProjectTopology` independently, and the stale guards check machine and
+  project but *not ordering* — so a slower earlier response landing last overwrote a newer
+  list and a just-created worktree disappeared again. Reproduced with a scratch test before
+  fixing. Now routed through `TrailingRefreshCoordinator` keyed by machine+project.
+
+Note for anyone extending this: `TrailingRefreshCoordinator` does **not** collapse two
+overlapping calls into one HTTP request. It runs the second as one trailing pass after the
+first completes, so the newest response is always applied last. An assertion of
+`toHaveBeenCalledOnce()` will hang against it.
 
 ## Current position
 
@@ -42,7 +55,7 @@ Every charter finish-line condition is satisfied:
    `workspaceService.test.ts`), refresh-preserves-selection and
    refresh-when-selected-workspace-disappeared (`workspaceController.test.ts`, 7 tests),
    resume + app-data wiring (`PiWebApp.workspaceTopology.test.ts`, 3 tests).
-5. ✅ **`npm run verify` green** (228 files / 1840 passed, 2 skipped) and
+5. ✅ **`npm run verify` green** (228 files / 1843 passed, 2 skipped) and
    `.changeset/worktree-autodetect.md` exists.
 
 Nothing in this work touched `src/server/sessiond.ts`, session runtime ownership, or the
@@ -65,6 +78,7 @@ under `#worktree-list-out-of-date`.
 
 - Commits: `266f941` (server filter), `d0f8f9f` (client refresh method),
   `84545fb` (wiring + docs + changeset), `79577e4` (selected-workspace freshness fix),
+  `8f060d1` (drop unused `locked`), `f8c3fdb` (serialize overlapping refreshes),
   plus the `docs(relay)` packet commits.
 - Second invariant, added by `79577e4`: re-pointing `selectedWorkspace` is safe **only**
   while it is keyed by `id` and skipped on unchanged metadata. Keying it by anything that can
