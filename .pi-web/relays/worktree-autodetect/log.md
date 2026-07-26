@@ -359,3 +359,89 @@ session daemon restart is required**.
 ### Handing off?
 
 **Yes.** Work committed, packet updated, leg 3 dispatched via `spawn_session`.
+
+---
+
+## Leg 3 — wire the refresh to browser resume, document, changeset, full verify (final)
+
+### What I did
+
+Wired the leg-2 refresh into the two existing refresh paths, documented the behavior,
+added the changeset, and ran the full `npm run verify` the charter requires of the last leg.
+
+1. **Wiring (`src/client/src/components/PiWebApp.ts`, 2 lines).** Added
+   `this.workspaces.refreshSelectedProjectTopology()` to the `Promise.all` in
+   `refreshAfterBrowserResume` (~438) and in `refreshAppData` (~496). Nothing else in that
+   2300-line file was read or touched, per the charter's reading discipline.
+2. **Wiring test (`src/client/src/components/PiWebApp.workspaceTopology.test.ts`, new,
+   3 tests).** Verifies the refresh is invoked by the exact callback
+   `BrowserResumeController` calls (`browserResume.callbacks.refreshAfterResume`, not a
+   hand-picked method reference), by `refreshAppData`, and that it still runs when a sibling
+   refresh in the same batch rejects. Sibling refreshes are stubbed so the assertions observe
+   only the topology call.
+3. **Docs (`docs/faq.html`).** New FAQ entry `#worktree-list-out-of-date` plus its TOC link:
+   worktrees are listed on demand and never registered; the list is re-read on tab
+   focus/visibility rather than continuously, so refocusing updates it; selection/session/
+   scroll are preserved; worktrees with a missing checkout directory are hidden and git still
+   tracks them until `git worktree prune`. Placed in the FAQ per
+   `.agents/skills/documentation-guide/SKILL.md` (troubleshooting/edge-case content);
+   `README.md` deliberately untouched.
+4. **Changeset (`.changeset/worktree-autodetect.md`).** `patch` for `@jmfederico/pi-web`
+   (CalVer: patch is correct for a non-breaking user-facing capability), written as user
+   behavior rather than an implementation log.
+
+### Decisions and why
+
+- **Did not add the `connectRealtime` `onReconnect` call.** `plan.md` marked it optional
+  "only if it costs nothing". It is not free: `onReconnect` captures the machine id at
+  connect time, while `refreshSelectedProjectTopology` reads the selected machine at call
+  time, so wiring them together would either need a machine-scoped variant or would fire a
+  refresh for a machine the user has since left. Adding a second concept for no user-visible
+  gain over the resume path failed the cost test. Socket reconnect on resume is already
+  covered by the resume path itself.
+- **Did not pass a message-prefixing `onBackgroundError` sink from `PiWebApp`.** Leg 2 made
+  it optional with a `console.warn` default that already includes project and machine in the
+  message. `status.md` explicitly recorded this as not-required work; adding it would be
+  scope creep for identical output.
+- **Verified the wiring test is not vacuous.** Removed both call sites with `perl`, re-ran the
+  file: 3/3 failed. Restored the file (verified 2 occurrences back) and re-ran: 3/3 passed.
+- **No charter boundary crossed.** No timer, watcher, process, endpoint, or push channel;
+  no change inside `refreshSelectedProjectTopology`; leg 2's tests were not weakened; the
+  resume path re-derives no selection from the refreshed list.
+
+### Checks run
+
+- `npx vitest --run src/client/src/components/PiWebApp.workspaceTopology.test.ts` →
+  **3 passed** (first run had 1 failure from a stub-shape mistake in my own test helper,
+  fixed by failing one named sibling refresh instead of all of them)
+- mutation check (call sites removed) → **3 failed**, as intended; restored → **3 passed**
+- `git diff --check` → clean
+- `npx eslint` on the new test and `PiWebApp.ts` → **clean**
+- **`npm run verify` → green**: typecheck, lint, knip, and 228 test files /
+  1840 passed, 2 skipped
+- pre-commit `npm run verify:staged` → typecheck (cached), knip, eslint, related vitest
+  (6 files / 20 tests) all **passed**
+
+### Artifacts changed
+
+- `src/client/src/components/PiWebApp.ts` (2 lines added)
+- `src/client/src/components/PiWebApp.workspaceTopology.test.ts` (new, 3 tests)
+- `docs/faq.html` (new FAQ entry + TOC link)
+- `.changeset/worktree-autodetect.md` (new)
+- committed as `84545fb feat(workspaces): refresh worktrees on browser resume`
+- `status.md` rewritten as a finished-relay baton: finish-line conditions checked off one by
+  one with their commits, leg tracking set to last completed 3 / next none, shipped behavior
+  described in user terms, and the never-route-through-`selectWorkspace` invariant recorded
+  for whoever edits this code next
+
+### Blockers
+
+None. No intervention signal fired in this leg or any earlier one. No sessiond code touched,
+so **no manual session daemon restart is required**; the change lands on the autoreloading
+web/UI service path only.
+
+### Handing off?
+
+**No — this was the final leg.** All five charter finish-line conditions are met and
+`npm run verify` is green, so per the charter this runner stops instead of spawning. The
+branch `feat/worktree-autodetect` is ready for human review and merge.
