@@ -273,6 +273,50 @@ describe("WorkspaceController.refreshSelectedProjectTopology", () => {
     expect(test.state().selectedWorkspace).toBe(selected);
   });
 
+  it("serializes overlapping refreshes so an earlier response cannot overwrite a newer list", async () => {
+    const repo = project("p1", "/repo");
+    const main = workspace(repo.id, repo.path, { isMain: true });
+    const created = workspace(repo.id, "/repo-feature");
+    const gates: ((workspaces: Workspace[]) => void)[] = [];
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const loadWorkspaces = vi.fn(() => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      return new Promise<Workspace[]>((resolve) => {
+        gates.push((workspaces) => { inFlight -= 1; resolve(workspaces); });
+      });
+    });
+    const test = harness(
+      {
+        selectedMachine: machine("local"),
+        projects: [repo],
+        selectedProject: repo,
+        selectedWorkspace: main,
+        workspaces: [main],
+        workspacesByProjectId: { [repo.id]: [main] },
+      },
+      loadWorkspaces,
+    );
+
+    const resumeRefresh = test.controller.refreshSelectedProjectTopology();
+    await Promise.resolve();
+    const appDataRefresh = test.controller.refreshSelectedProjectTopology();
+    await Promise.resolve();
+
+    // The second caller does not open its own request while the first is in flight; it gets
+    // one trailing pass afterwards. Without this, two responses race and the slower-but-older
+    // one can land last, making a just-created worktree disappear again.
+    expect(maxInFlight).toBe(1);
+    gates[0]?.([main]);
+    await vi.waitFor(() => { expect(gates).toHaveLength(2); });
+    gates[1]?.([main, created]);
+    await Promise.all([resumeRefresh, appDataRefresh]);
+
+    // The last response wins, so the newly created worktree stays visible.
+    expect(test.state().workspaces).toEqual([main, created]);
+  });
+
   it("does not request anything when no project is selected", async () => {
     const loadWorkspaces = vi.fn();
     const test = harness({ selectedMachine: machine("local") }, loadWorkspaces);

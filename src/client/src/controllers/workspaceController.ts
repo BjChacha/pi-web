@@ -4,6 +4,7 @@ import { mergeCachedNewSessions } from "../cachedNewSessions";
 import { machineProjectKey } from "../machineKeys";
 import { selectedMachineId, type GetState, type RouteTarget, type SetState, type UpdateUrl } from "./types";
 import type { SessionController } from "./sessionController";
+import { TrailingRefreshCoordinator } from "./trailingRefreshCoordinator";
 import { InMemoryWorkspaceSelectionMemory, selectPreferredWorkspace, type WorkspaceSelectionMemory } from "./workspaceSelection";
 
 export interface WorkspaceControllerDependencies {
@@ -14,6 +15,7 @@ export interface WorkspaceControllerDependencies {
 export class WorkspaceController {
   private readonly api: Pick<typeof defaultApi, "sessions" | "workspaces">;
   private readonly onBackgroundError: (message: string, error: unknown) => void;
+  private readonly topologyRefreshes = new TrailingRefreshCoordinator<string>();
 
   constructor(
     private readonly getState: GetState,
@@ -99,14 +101,20 @@ export class WorkspaceController {
     const project = state.selectedProject;
     if (project === undefined) return;
     const machineId = selectedMachineId(state);
-    try {
-      const workspaces = await this.api.workspaces(project.id, machineId);
-      const current = this.getState();
-      if (selectedMachineId(current) !== machineId || current.selectedProject?.id !== project.id) return;
-      this.applyProjectWorkspaces(project.id, workspaces);
-    } catch (error) {
-      this.onBackgroundError(`Failed to refresh workspaces for project ${project.id} on ${machineId}`, error);
-    }
+    // Callers are independent (browser resume and the plugin-facing app refresh), so two
+    // refreshes for the same machine+project can overlap. Sharing one request keeps a slow
+    // earlier response from landing last and overwriting a newer list, which would make a
+    // just-created worktree disappear again.
+    await this.topologyRefreshes.request(machineProjectKey(machineId, project.id), async () => {
+      try {
+        const workspaces = await this.api.workspaces(project.id, machineId);
+        const current = this.getState();
+        if (selectedMachineId(current) !== machineId || current.selectedProject?.id !== project.id) return;
+        this.applyProjectWorkspaces(project.id, workspaces);
+      } catch (error) {
+        this.onBackgroundError(`Failed to refresh workspaces for project ${project.id} on ${machineId}`, error);
+      }
+    });
   }
 
   async refreshAfterWorkspaceDeleted(projectId: string, workspaceId: string): Promise<void> {
