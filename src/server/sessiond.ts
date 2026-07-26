@@ -27,6 +27,7 @@ import { SESSIOND_RUNTIME_CAPABILITIES } from "../shared/capabilities.js";
 import { agentSessionDirEnvKeys, effectivePiWebConfig, maxUploadBytes, offlineModeEnabled } from "../config.js";
 import { createActiveAgentProfileDescriptor } from "../sessiond/activeAgentProfile.js";
 import { runSessionDaemonStartup } from "./sessiond/sessionDaemonStartup.js";
+import { sessionServiceDependencies } from "./sessiond/sessionServiceDependencies.js";
 
 const daemonEnvironment: NodeJS.ProcessEnv = Object.freeze({ ...process.env });
 const { config } = effectivePiWebConfig({ env: daemonEnvironment });
@@ -70,24 +71,22 @@ await runSessionDaemonStartup({
     const spawnTargets = config.spawnSessions
       ? new ProjectScopedSpawnTargetResolver({ projects: new ProjectService(new ProjectStore()), workspaces: new WorkspaceService() })
       : undefined;
-    const sessions = new PiSessionService(eventHub, {
+    const sessions = new PiSessionService(eventHub, sessionServiceDependencies({
       modelRuntime: auth.runtime,
       agentDir: activeAgentProfile.dir,
       workspaceActivity,
       logger: app.log,
       ...(spawnTargets === undefined ? {} : { spawnTargets }),
-      subsessionsEnabled: spawnTargets !== undefined && config.subsessions,
+      subsessionsEnabled: config.subsessions,
       notificationStore,
       unreadStore,
-      // Read-only, so session startup can tell a waiting user that provider
-      // model lists are refreshing at the same time.
       catalogRefreshStatus: catalogRefresher,
       sessionManager: createPiSessionManagerGateway({
         agentDir: activeAgentProfile.dir,
         env: daemonEnvironment,
         sessionDirEnvKeys: activeAgentProfile.sessionDirEnvKeys,
       }),
-    });
+    }));
     auth.subscribe((change) => { sessions.applyAuthChange(change); });
     const terminals = new TerminalService(eventHub, workspaceActivity);
     const runtimeComponent = Object.freeze({
