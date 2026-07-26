@@ -167,13 +167,13 @@
                 Environment overrides include <code>PI_WEB_HOST</code>, <code>PI_WEB_PORT</code> / <code>PORT</code>,
                 <code>PI_WEB_ALLOWED_HOSTS</code>, <code>PI_WEB_MAX_UPLOAD_BYTES</code>, <code>PI_WEB_AGENT_COMMAND</code>,
                 <code>PI_WEB_AGENT_DIR</code>, <code>PI_WEB_AGENT_SESSION_DIR</code>, <code>PI_CODING_AGENT_DIR</code> /
-                <code>PI_CODING_AGENT_SESSION_DIR</code> for Pi compatibility, <code>PI_WEB_SPAWN_SESSIONS</code>, and
-                <code>PI_WEB_SUBSESSIONS</code>.
+                <code>PI_CODING_AGENT_SESSION_DIR</code> for Pi compatibility, <code>PI_WEB_SPAWN_SESSIONS</code>,
+                <code>PI_WEB_SUBSESSIONS</code>, and <code>PI_WEB_ASK_USER</code>.
               </p>
               <ul>
                 <li><code>host</code> / <code>port</code>: restart the gateway web/API service or process.</li>
                 <li><code>maxUploadBytes</code>: restart both the web/API process and the session daemon on that machine.</li>
-                <li><code>agent.command</code> / <code>agent.dir</code> / <code>spawnSessions</code> / <code>subsessions</code>: restart the session daemon on that machine.</li>
+                <li><code>agent.command</code> / <code>agent.dir</code> / <code>spawnSessions</code> / <code>subsessions</code> / <code>askUser</code>: restart the session daemon on that machine.</li>
                 <li><code>pathAccess</code>: applies on the next request; existing file views may need a browser refresh.</li>
                 <li><code>uploads.defaultFolder</code>: applies to newly opened Files upload dialogs and new direct drag/drop batches after config/workspace refresh.</li>
                 <li><code>plugins</code>: reload the browser tab after changing PI WEB plugin enablement.</li>
@@ -212,6 +212,7 @@
   },
   "spawnSessions": true,
   "subsessions": false,
+  "askUser": true,
   "plugins": {
     "workspace-tasks": { "enabled": true },
     "updates": { "enabled": true },
@@ -365,6 +366,14 @@
                       <td><code>PI_WEB_SUBSESSIONS</code></td>
                       <td>Global/session daemon</td>
                       <td>Not supported locally; also requires <code>spawnSessions</code></td>
+                      <td>Restart session daemon on that machine</td>
+                    </tr>
+                    <tr>
+                      <td>Agent can post question forms</td>
+                      <td><code>askUser</code></td>
+                      <td><code>PI_WEB_ASK_USER</code></td>
+                      <td>Global/session daemon</td>
+                      <td>Not supported locally</td>
                       <td>Restart session daemon on that machine</td>
                     </tr>
                     <tr>
@@ -791,6 +800,38 @@
                 session daemon on that machine after changing them.
               </p>
               <p>Environment override: <code>PI_WEB_SUBSESSIONS=0|1|true|false</code>.</p>
+
+              <h3><code>askUser</code> and <code>ask_user</code></h3>
+              <p>
+                <code>askUser</code> controls whether agents receive the core <code>ask_user</code> tool. It defaults to
+                <code>true</code>; set it to <code>false</code>, or set <code>PI_WEB_ASK_USER=false</code>, to remove the
+                tool. The environment override accepts <code>0|1|true|false</code> and takes precedence over the config file.
+              </p>
+              <p>
+                The tool accepts one set of 1–20 questions. Each question has a unique <code>id</code>, its
+                <code>question</code> text, optional supporting <code>detail</code>, up to 12 options with stable values and
+                user-facing labels, and optional <code>allowOther</code> and <code>multiple</code> flags. A question must
+                offer at least one option or allow free text. No question is required: the user may leave any of them
+                unanswered.
+              </p>
+              <p>
+                Calling <code>ask_user</code> posts the whole set as one browser form and ends the current agent run
+                instead of waiting for the user. The open form is owned by the session daemon, so it survives a browser
+                disconnect, browser reload, or web/API restart while that daemon keeps running. When the user submits,
+                the answers arrive as a follow-up that wakes the session; each question is reported with its selected
+                option values or free text, or explicitly as unanswered.
+              </p>
+              <p>
+                PI WEB confirms a partial submission before sending it and names the unanswered questions. Only one ask
+                can be open per session: a later <code>ask_user</code> call supersedes the earlier one, reports that fact
+                and its unanswered questions to the model, and turns the earlier card into a read-only transcript record.
+                Submitted and cancelled asks likewise remain readable in the transcript.
+              </p>
+              <div class="callout warning">
+                <strong>Restart required:</strong> restart the session daemon after changing <code>askUser</code> or after
+                upgrading PI WEB to a version that introduces this tool. For the systemd user service, run
+                <code>systemctl --user restart pi-web-sessiond</code>.
+              </div>
             </section>
 
 
