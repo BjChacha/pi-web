@@ -103,6 +103,23 @@ describe("notification socket guards", () => {
     expect(parseSessionSocketEvent({ type: "session.startup", cwd: "/repo", activity })).toBeUndefined();
   });
 
+  it("accepts validated ask frames and drops malformed ones", () => {
+    const ask = {
+      askId: "ask-1",
+      askedAt: "2026-07-20T00:00:00.000Z",
+      questions: [{ id: "q1", question: "Which database?", options: [{ value: "pg", label: "Postgres" }] }],
+    };
+
+    expect(parseSessionSocketEvent({ type: "ask.opened", ask })).toEqual({ type: "ask.opened", ask });
+    expect(parseSessionSocketEvent({ type: "ask.closed", askId: "ask-1", reason: "superseded" }))
+      .toEqual({ type: "ask.closed", askId: "ask-1", reason: "superseded" });
+    expect(parseSessionSocketEvent({ type: "ask.opened", ask: { ...ask, questions: [] } })).toBeUndefined();
+    expect(parseSessionSocketEvent({ type: "ask.opened" })).toBeUndefined();
+    expect(parseSessionSocketEvent({ type: "ask.closed", askId: "ask-1", reason: "ignored" })).toBeUndefined();
+    // Ask frames are per-session only, so they must not be accepted globally.
+    expect(parseRealtimeSocketEvent({ type: "ask.opened", ask })).toBeUndefined();
+  });
+
   it("preserves existing event acceptance without treating unknown types as realtime events", () => {
     expect(parseSessionSocketEvent({ type: "command.output", level: "info", message: "legacy" })).toMatchObject({ type: "command.output" });
     expect(parseRealtimeSocketEvent({ type: "future.notification", payload: {} })).toBeUndefined();

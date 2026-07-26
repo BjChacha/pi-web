@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { PI_WEB_CAPABILITIES } from "../../../shared/capabilities";
-import { SESSION_NOTIFICATION_LIMIT, SESSION_NOTIFICATION_MESSAGE_BYTES, SESSION_UNREAD_CATALOG_ID_MAX_LENGTH } from "../../../shared/apiTypes";
-import { parseAuthProvidersResponse, parseCommandResult, parseFileContentResponse, parseFileSuggestion, parseGitStatusResponse, parseMachineRuntime, parseMessagePage, parseOAuthFlowState, parsePiPackageMutationResponse, parsePiPackagesResponse, parsePiWebConfigResponse, parsePiWebPluginsResponse, parsePiWebRuntimeResponse, parsePiWebStatusResponse, parseSessionBulkArchiveResponse, parseSessionBulkDeleteArchivedResponse, parseSessionCleanupExecuteResponse, parseSessionCleanupPreviewResponse, parseSessionInfo, parseSessionNotificationInboxEvent, parseSessionNotificationInboxSnapshot, parseSessionStartupProgressEvent, parseSessionStatus, parseSessionStreamSnapshot, parseSessionTreeNavigateResult, parseSessionTreeSnapshot, parseSessionUnreadCatalogSnapshot, parseSessionUnreadEvent, parseSlashCommand, parseTerminalCommandRun, parseTerminalInfo, parseWorkspace, parseWorkspaceActivityResponse } from "./parsers";
+import { ASK_USER_TEXT_MAX_LENGTH, SESSION_NOTIFICATION_LIMIT, SESSION_NOTIFICATION_MESSAGE_BYTES, SESSION_UNREAD_CATALOG_ID_MAX_LENGTH } from "../../../shared/apiTypes";
+import { parseAskUserCloseResponse, parseAuthProvidersResponse, parseCommandResult, parseFileContentResponse, parseFileSuggestion, parseGitStatusResponse, parseMachineRuntime, parseMessagePage, parseOAuthFlowState, parsePiPackageMutationResponse, parsePiPackagesResponse, parsePiWebConfigResponse, parsePiWebPluginsResponse, parsePiWebRuntimeResponse, parsePiWebStatusResponse, parseSessionBulkArchiveResponse, parseSessionBulkDeleteArchivedResponse, parseSessionCleanupExecuteResponse, parseSessionCleanupPreviewResponse, parseSessionInfo, parseSessionNotificationInboxEvent, parseSessionNotificationInboxSnapshot, parseSessionStartupProgressEvent, parseSessionStatus, parseSessionStreamSnapshot, parseSessionTreeNavigateResult, parseSessionTreeSnapshot, parseSessionUnreadCatalogSnapshot, parseSessionUnreadEvent, parseSlashCommand, parseTerminalCommandRun, parseTerminalInfo, parseWorkspace, parseWorkspaceActivityResponse } from "./parsers";
 
 describe("API parsers", () => {
   it("preserves additive interactive API-key flow hints and defaults legacy options", () => {
@@ -711,7 +711,126 @@ describe("API parsers", () => {
       delta: { kind: "cleared", reason: "future-reason" },
     })).toThrow("Invalid notification clear reason");
   });
+
+  it("parses an open ask with options, details, other, and multi-select", () => {
+    const parsed = parseSessionStatus({ ...statusWire(), pendingAsk: pendingAskWire() });
+
+    expect(parsed.pendingAsk).toEqual({
+      askId: "ask-1",
+      askedAt: "2026-07-20T00:00:00.000Z",
+      questions: [
+        { id: "q1", question: "Which database?", detail: "Pick the primary store", options: [{ value: "pg", label: "Postgres", detail: "Relational" }, { value: "sqlite", label: "SQLite" }] },
+        { id: "q2", question: "Which extras?", options: [{ value: "metrics", label: "Metrics" }], allowOther: true, multiple: true },
+      ],
+    });
+  });
+
+  it("omits the pending ask entirely when the field is absent", () => {
+    expect(parseSessionStatus(statusWire()).pendingAsk).toBeUndefined();
+  });
+
+  it("rejects an ask that cannot be rendered or answered honestly", () => {
+    const ask = pendingAskWire();
+    const first = ask.questions[0];
+    expect(() => parseSessionStatus({ ...statusWire(), pendingAsk: { ...ask, questions: [] } })).toThrow("Pending ask has no questions");
+    expect(() => parseSessionStatus({ ...statusWire(), pendingAsk: { ...ask, questions: [first, first] } })).toThrow("Duplicate ask question id");
+    expect(() => parseSessionStatus({ ...statusWire(), pendingAsk: { ...ask, askId: "" } })).toThrow("Expected non-empty string field: askId");
+    expect(() => parseSessionStatus({ ...statusWire(), pendingAsk: { ...ask, questions: [{ id: "q1", question: "Anything?", options: [] }] } })).toThrow("Ask question offers no way to answer");
+    expect(() => parseSessionStatus({ ...statusWire(), pendingAsk: { ...ask, questions: [{ id: "q1", question: "Which?", options: [{ value: "a", label: "A" }, { value: "a", label: "Also A" }] }] } })).toThrow("Duplicate ask option value");
+    expect(() => parseSessionStatus({ ...statusWire(), pendingAsk: { ...ask, questions: [{ id: "q1", question: "x".repeat(ASK_USER_TEXT_MAX_LENGTH + 1), options: [{ value: "a", label: "A" }] }] } })).toThrow("String field exceeds limit: question");
+  });
+
+  it("parses a closed ask response carrying the outcome and recomputed status", () => {
+    const response = parseAskUserCloseResponse({
+      result: "closed",
+      outcome: askOutcomeWire(),
+      sessionStatus: statusWire(),
+    });
+
+    expect(response.result).toBe("closed");
+    expect(response.outcome).toMatchObject({
+      askId: "ask-1",
+      reason: "submitted",
+      answeredCount: 1,
+      unansweredIds: ["q2"],
+      summary: "Answered 1 of 2; unanswered: q2",
+    });
+    expect(response.outcome?.questions[0]).toMatchObject({ answered: true, values: ["pg"] });
+    expect(response.sessionStatus.sessionId).toBe("s1");
+  });
+
+  it("parses a stale close as an ordinary race with no outcome", () => {
+    const response = parseAskUserCloseResponse({ result: "stale", sessionStatus: statusWire() });
+
+    expect(response).toEqual({ result: "stale", sessionStatus: parseSessionStatus(statusWire()) });
+  });
+
+  it("rejects close responses whose outcome contradicts itself", () => {
+    const outcome = askOutcomeWire();
+    expect(() => parseAskUserCloseResponse({ result: "closed", sessionStatus: statusWire() })).toThrow("Ask close response outcome mismatch");
+    expect(() => parseAskUserCloseResponse({ result: "stale", outcome, sessionStatus: statusWire() })).toThrow("Ask close response outcome mismatch");
+    expect(() => parseAskUserCloseResponse({ result: "closed", outcome: { ...outcome, answeredCount: 2 }, sessionStatus: statusWire() })).toThrow("Ask outcome answered count mismatch");
+    expect(() => parseAskUserCloseResponse({ result: "closed", outcome: { ...outcome, unansweredIds: [] }, sessionStatus: statusWire() })).toThrow("Ask outcome unanswered ids mismatch");
+    expect(() => parseAskUserCloseResponse({ result: "closed", outcome: { ...outcome, reason: "ignored" }, sessionStatus: statusWire() })).toThrow("Invalid ask close reason");
+    expect(() => parseAskUserCloseResponse({
+      result: "closed",
+      outcome: { ...outcome, questions: [{ ...askAnsweredRecordWire(), answered: false }, askUnansweredRecordWire()] },
+      sessionStatus: statusWire(),
+    })).toThrow("Ask answer contradicts its answered flag");
+    expect(() => parseAskUserCloseResponse({
+      result: "closed",
+      outcome: { ...outcome, questions: [{ ...askAnsweredRecordWire(), values: ["mysql"] }, askUnansweredRecordWire()] },
+      sessionStatus: statusWire(),
+    })).toThrow("Ask answer selected an option the question never offered");
+  });
 });
+
+function statusWire() {
+  return {
+    sessionId: "s1",
+    isStreaming: false,
+    isCompacting: false,
+    isBashRunning: false,
+    pendingMessageCount: 0,
+    queuedMessages: [],
+    tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    cost: 0,
+  };
+}
+
+function pendingAskWire() {
+  return {
+    askId: "ask-1",
+    askedAt: "2026-07-20T00:00:00.000Z",
+    questions: [
+      { id: "q1", question: "Which database?", detail: "Pick the primary store", options: [{ value: "pg", label: "Postgres", detail: "Relational" }, { value: "sqlite", label: "SQLite" }] },
+      { id: "q2", question: "Which extras?", options: [{ value: "metrics", label: "Metrics" }], allowOther: true, multiple: true },
+    ],
+  };
+}
+
+function askAnsweredRecordWire() {
+  const ask = pendingAskWire();
+  return { question: ask.questions[0], answered: true, values: ["pg"] };
+}
+
+function askUnansweredRecordWire() {
+  const ask = pendingAskWire();
+  return { question: ask.questions[1], answered: false, values: [] };
+}
+
+function askOutcomeWire() {
+  return {
+    askId: "ask-1",
+    reason: "submitted",
+    askedAt: "2026-07-20T00:00:00.000Z",
+    closedAt: "2026-07-20T00:01:00.000Z",
+    questions: [askAnsweredRecordWire(), askUnansweredRecordWire()],
+    answeredCount: 1,
+    unansweredIds: ["q2"],
+    summary: "Answered 1 of 2; unanswered: q2",
+  };
+}
 
 function sessionTreeWire() {
   const kinds = [
