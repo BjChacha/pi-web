@@ -77,7 +77,7 @@ describe("PiSessionService session startup progress", () => {
     // The proof that matters: the user is told what is being waited on before
     // the wait ends, not after it.
     expect(startupText(hub)).toEqual(["Creating session: Starting the Pi session"]);
-    expect(startupEvents(hub).at(0)).toMatchObject({ cwd: "/workspace", activity: { sessionId: "session-1", phase: "active" } });
+    expect(startupEvents(hub).at(0)).toMatchObject({ activity: { sessionId: "session-1", phase: "active" } });
 
     runtimeResult.resolve(fake.runtime);
     await started;
@@ -157,9 +157,40 @@ describe("PiSessionService session startup progress", () => {
 
     await service.start("/workspace");
 
-    expect(startupEvents(hub).at(-1)).toMatchObject({ cwd: "/workspace", activity: { sessionId: "session-1", phase: "idle", label: "idle" } });
+    expect(startupEvents(hub).at(-1)).toMatchObject({ activity: { sessionId: "session-1", phase: "idle", label: "idle" } });
     expect(startupEvents(hub).at(-1)?.activity.detail).toBeUndefined();
     await service.dispose();
+  });
+
+  it("echoes a create's correlation token on every startup report of that construction", async () => {
+    const { hub, service } = startupService();
+
+    await service.start("/workspace", { startupToken: "pending-session-3-k2x9" });
+
+    // The token labels the browser row that is waiting, so it must ride every
+    // report of this construction, the closing idle one included.
+    expect(startupEvents(hub).map((event) => event.startupToken)).toEqual([
+      "pending-session-3-k2x9",
+      "pending-session-3-k2x9",
+      "pending-session-3-k2x9",
+    ]);
+    // The token is an opaque throwaway label, never the session's identity.
+    expect(startupEvents(hub).map((event) => event.activity.sessionId)).toEqual(["session-1", "session-1", "session-1"]);
+    await service.dispose();
+  });
+
+  it("publishes no correlation token when a create supplies none, and none for an open", async () => {
+    const created = startupService();
+    await created.service.start("/workspace");
+    const opened = startupService({ sessionRecords: [sessionRecord("session-1")] });
+    await opened.service.status(sessionRef("session-1"));
+
+    for (const hub of [created.hub, opened.hub]) {
+      expect(startupEvents(hub).length).toBeGreaterThan(0);
+      expect(startupEvents(hub).every((event) => event.startupToken === undefined)).toBe(true);
+    }
+    await created.service.dispose();
+    await opened.service.dispose();
   });
 
   it("ends the startup window when the runtime construction itself fails", async () => {

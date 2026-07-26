@@ -275,15 +275,19 @@ export function parseSessionUnreadEvent(value: unknown): SessionUnreadEvent {
 /**
  * Validate a startup progress frame. The browser substitutes its own wording
  * from this event, so a malformed frame must be dropped rather than rendered:
- * `cwd` is the routing key, and an activity missing its phase or label could
- * otherwise blank out or freeze the text a user is reading while they wait.
+ * `startupToken` is the routing key when present, and an activity missing its
+ * phase or label could otherwise blank out or freeze the text a user is reading
+ * while they wait. An absent token is valid — an open routes by session id — but
+ * a present empty one is not, since it could match no row honestly.
  */
 export function parseSessionStartupProgressEvent(value: unknown): SessionStartupProgressEvent {
   const record = requireRecord(value);
   if (record["type"] !== "session.startup") throw new Error("Invalid session startup event type");
+  const startupToken = optionalString(record, "startupToken");
+  if (startupToken === "") throw new Error("Expected non-empty string field: startupToken");
   return {
     type: "session.startup",
-    cwd: requireNonEmptyString(record, "cwd"),
+    ...optionalField("startupToken", startupToken),
     activity: parseSessionActivity(record["activity"]),
   };
 }
