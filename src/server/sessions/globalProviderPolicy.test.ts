@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Provider } from "@earendil-works/pi-ai";
+import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import {
   bootstrapAndFreezeGlobalExtensionProviders,
   type GlobalProviderBootstrapLogger,
@@ -69,6 +70,52 @@ function nativeProvider(providerId: string, name = providerId): Provider {
   };
 }
 
+const GLOBAL_PROVIDER_SOURCE = `
+  export default function (pi) {
+    pi.registerProvider("global-config", {
+      name: "Global Config",
+      baseUrl: "https://global.example.com",
+      apiKey: "$GLOBAL_PROVIDER_KEY",
+      api: "openai-completions",
+      models: [{
+        id: "global-model",
+        name: "Global Model",
+        reasoning: false,
+        input: ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 8192,
+        maxTokens: 1024
+      }]
+    });
+  }
+`;
+
+function catalogModel(modelId: string): NonNullable<ProviderConfigInput["models"]>[number] {
+  return {
+    id: modelId,
+    name: modelId,
+    reasoning: false,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 8_192,
+    maxTokens: 1_024,
+  };
+}
+
+/**
+ * The complete config the motivating extension re-sends when it refreshes its
+ * catalog: every baseline field repeated verbatim, only `models` differing.
+ */
+function globalConfigWithModels(modelIds: readonly string[]): ProviderConfigInput {
+  return {
+    name: "Global Config",
+    baseUrl: "https://global.example.com",
+    apiKey: "$GLOBAL_PROVIDER_KEY",
+    api: "openai-completions",
+    models: modelIds.map(catalogModel),
+  };
+}
+
 function registerProjectConfigProvider(runtime: Awaited<ReturnType<typeof createTestModelRuntime>>): void {
   runtime.registerProvider("project-config", {
     name: "Project Config",
@@ -86,6 +133,8 @@ function registerProjectConfigProvider(runtime: Awaited<ReturnType<typeof create
     }],
   });
 }
+
+type ProviderConfigInput = NonNullable<ReturnType<ModelRuntime["getRegisteredProviderConfig"]>>;
 
 describe("bootstrapAndFreezeGlobalExtensionProviders", () => {
   it("captures the global baseline before making every later provider mutation a no-op", async () => {
@@ -230,6 +279,120 @@ describe("bootstrapAndFreezeGlobalExtensionProviders", () => {
     expect(() => { runtime.registerNativeProvider(nativeProvider("project-native")); }).not.toThrow();
     expect(() => { runtime.unregisterProvider("project-only"); }).not.toThrow();
     expect(runtime.getRegisteredProviderIds()).toEqual([]);
+  });
+
+  it("applies a models-only refresh from a known provider and rebases the baseline", async () => {
+    const agentDir = await agentDirWithExtension(GLOBAL_PROVIDER_SOURCE);
+    const runtime = await createTestModelRuntime();
+    const { entries, logger } = capturingLogger();
+
+    await bootstrapAndFreezeGlobalExtensionProviders(runtime, agentDir, logger);
+
+    // A complete config, exactly as a refreshing extension re-sends it.
+    runtime.registerProvider("global-config", globalConfigWithModels(["global-model", "refreshed-model"]));
+
+    expect(runtime.getModel("global-config", "refreshed-model")).toBeDefined();
+    expect(runtime.getModel("global-config", "global-model")).toBeDefined();
+    expect(runtime.getRegisteredProviderConfig("global-config")).toMatchObject({
+      baseUrl: "https://global.example.com",
+      apiKey: "$GLOBAL_PROVIDER_KEY",
+    });
+    expect(entries).toContainEqual({
+      level: "info",
+      details: {
+        context: "global-provider-bootstrap",
+        operation: "registerProvider",
+        providerId: "global-config",
+        modelCount: 2,
+      },
+      message: "applied models-only provider update after global bootstrap",
+    });
+
+    // The accepted config becomes the new baseline, so the next honest refresh
+    // (compared against it, not the original) is still accepted.
+    runtime.registerProvider("global-config", globalConfigWithModels(["second-refresh-model"]));
+
+    expect(runtime.getModel("global-config", "second-refresh-model")).toBeDefined();
+    expect(runtime.getModel("global-config", "refreshed-model")).toBeUndefined();
+    expect(entries.filter((entry) => entry.message === "ignored provider mutation after global bootstrap")).toEqual([]);
+  });
+
+  it("ignores registrations that change any field other than the model catalog", async () => {
+    const agentDir = await agentDirWithExtension(GLOBAL_PROVIDER_SOURCE);
+    const runtime = await createTestModelRuntime();
+    const { entries, logger } = capturingLogger();
+
+    await bootstrapAndFreezeGlobalExtensionProviders(runtime, agentDir, logger);
+    const baselineConfig = runtime.getRegisteredProviderConfig("global-config");
+
+    const mismatches: Record<string, ProviderConfigInput> = {
+      name: { ...globalConfigWithModels(["changed-model"]), name: "Renamed Config" },
+      baseUrl: { ...globalConfigWithModels(["changed-model"]), baseUrl: "https://replacement-secret.example.com" },
+      apiKey: { ...globalConfigWithModels(["changed-model"]), apiKey: "replacement-secret-api-key" },
+      api: { ...globalConfigWithModels(["changed-model"]), api: "anthropic-messages" },
+      headers: { ...globalConfigWithModels(["changed-model"]), headers: { Authorization: "replacement-secret-token" } },
+      authHeader: { ...globalConfigWithModels(["changed-model"]), authHeader: false },
+      // Function-valued fields cannot be compared by value, so any incoming
+      // closure is conservatively treated as a mismatch.
+      refreshModels: {
+        ...globalConfigWithModels(["changed-model"]),
+        refreshModels: () => Promise.resolve([catalogModel("changed-model")]),
+      },
+      streamSimple: {
+        ...globalConfigWithModels(["changed-model"]),
+        streamSimple: () => { throw new Error("streamSimple should not be called in this test"); },
+      },
+      oauth: {
+        ...globalConfigWithModels(["changed-model"]),
+        oauth: {
+          name: "Replacement OAuth",
+          login: () => Promise.reject(new Error("login should not be called in this test")),
+          refreshToken: () => Promise.reject(new Error("refreshToken should not be called in this test")),
+          getApiKey: () => "replacement-secret-oauth-key",
+        },
+      },
+    };
+    for (const config of Object.values(mismatches)) runtime.registerProvider("global-config", config);
+    // A provider absent from the baseline stays blocked even for models-only shapes.
+    runtime.registerProvider("unknown-config", { models: [catalogModel("unknown-model")] });
+
+    expect(runtime.getRegisteredProviderConfig("global-config")).toBe(baselineConfig);
+    expect(runtime.getModel("global-config", "changed-model")).toBeUndefined();
+    expect(runtime.getRegisteredProviderIds()).toEqual(["global-config"]);
+    expect(entries.filter((entry) => entry.message === "applied models-only provider update after global bootstrap"))
+      .toEqual([]);
+    // Repeated ignored registrations stay de-duplicated per (operation, provider).
+    const ignoredDetails = entries
+      .filter((entry) => entry.message === "ignored provider mutation after global bootstrap")
+      .map((entry) => entry.details);
+    expect(ignoredDetails).toEqual([
+      { context: "global-provider-bootstrap", operation: "registerProvider", providerId: "global-config" },
+      { context: "global-provider-bootstrap", operation: "registerProvider", providerId: "unknown-config" },
+    ]);
+    // Rejected configs carry credentials; the decision log must never echo them.
+    expect(JSON.stringify(ignoredDetails)).not.toContain("secret");
+  });
+
+  it("keeps native registration and unregistration frozen for a known provider", async () => {
+    const agentDir = await agentDirWithExtension(GLOBAL_PROVIDER_SOURCE);
+    const runtime = await createTestModelRuntime();
+    const { entries, logger } = capturingLogger();
+
+    await bootstrapAndFreezeGlobalExtensionProviders(runtime, agentDir, logger);
+    const baselineConfig = runtime.getRegisteredProviderConfig("global-config");
+
+    runtime.registerNativeProvider(nativeProvider("global-config", "native-secret-name"));
+    runtime.unregisterProvider("global-config");
+
+    expect(runtime.getRegisteredProviderConfig("global-config")).toBe(baselineConfig);
+    expect(runtime.getRegisteredNativeProvider("global-config")).toBeUndefined();
+    expect(runtime.getModel("global-config", "global-model")).toBeDefined();
+    expect(entries
+      .filter((entry) => entry.message === "ignored provider mutation after global bootstrap")
+      .map((entry) => entry.details)).toEqual([
+      { context: "global-provider-bootstrap", operation: "registerNativeProvider", providerId: "global-config" },
+      { context: "global-provider-bootstrap", operation: "unregisterProvider", providerId: "global-config" },
+    ]);
   });
 
   it("logs non-fatal Pi bootstrap diagnostics and still freezes the runtime", async () => {
