@@ -79,6 +79,9 @@ await runSessionDaemonStartup({
       subsessionsEnabled: spawnTargets !== undefined && config.subsessions,
       notificationStore,
       unreadStore,
+      // Read-only, so session startup can tell a waiting user that provider
+      // model lists are refreshing at the same time.
+      catalogRefreshStatus: catalogRefresher,
       sessionManager: createPiSessionManagerGateway({
         agentDir: activeAgentProfile.dir,
         env: daemonEnvironment,

@@ -238,7 +238,9 @@ Configure providers before the daemon starts: use the active agent directory's `
 
 ### Background model catalog refresh
 
-PI WEB shares one model runtime across all sessions, and provider model catalogs are refreshed over the network only on the session daemon's own background schedule. Nothing a browser or API request triggers waits on a provider catalog fetch, so a slow or unreachable provider cannot stall opening the model selector, starting a session, or the auth dialogs.
+PI WEB shares one model runtime across all sessions, and provider model catalogs are refreshed over the network only on the session daemon's own background schedule. Requests never start a catalog fetch of their own, so a slow or unreachable provider cannot stall opening the model selector, starting a session, or the auth dialogs on its own account.
+
+A refresh that is *already* in flight can still briefly delay starting or opening a session, because the shared runtime is read while that refresh is running. PI WEB says so while you wait: the session's activity line names the startup step it is on and adds `provider model lists are refreshing` when a background refresh is running at the same time. That note reports what is happening concurrently, not a proven cause.
 
 The session daemon runs the refresh:
 
