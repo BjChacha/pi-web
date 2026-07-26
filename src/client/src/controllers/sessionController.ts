@@ -1309,26 +1309,31 @@ export class SessionController {
   }
 
   // Session startup progress arrives while the daemon is still constructing the
-  // session, so it is routed by workspace path: a pending start knows its cwd
-  // but not the session id the daemon is creating. Once the target row is
-  // resolved the progress goes through the normal activity buffer, so it renders
-  // exactly like any other activity and stays batched per frame.
+  // session, so the target row is resolved by session id when the browser knows
+  // it and by workspace path when it does not: a pending start knows its cwd but
+  // not the session id the daemon is creating. Once the row is resolved the
+  // progress goes through the normal activity buffer, so it renders exactly like
+  // any other activity and stays batched per frame.
   private queueStartupProgress(event: SessionStartupProgressEvent): void {
-    const pending = this.startupProgressPendingStart(event.cwd);
-    if (pending !== undefined) {
-      // An idle startup phase means the daemon has nothing left to attribute, so
-      // restore this row's own generic wording rather than clearing the text of a
-      // creation request that has not returned yet.
-      this.queueActivityUpdate(event.activity.phase === "idle"
-        ? creatingPendingSessionActivity(pending.tempId, pending.queuedSends.length)
-        : { ...event.activity, sessionId: pending.tempId });
+    // A known session id is the strongest possible proof of the target, so it is
+    // checked first: while a create is pending in a workspace, an *existing*
+    // session in that same workspace can be opened too (another row selected,
+    // another tab, a subsession), and that open publishes the same cwd. Matching
+    // on cwd first would paint the pending row with another session's phase.
+    if (this.getState().sessions.some((session) => session.id === event.activity.sessionId)) {
+      this.queueActivityUpdate(event.activity);
       return;
     }
-    // Opening a session the browser already knows the id of: the event applies as
-    // published. Anything else (a foreign workspace, or several pending starts in
-    // one workspace, where the row this belongs to cannot be proved) is dropped
-    // rather than attributed to a guess.
-    if (this.getState().sessions.some((session) => session.id === event.activity.sessionId)) this.queueActivityUpdate(event.activity);
+    // The id is unknown, so this can only be a create whose id the browser has
+    // not been told yet. Route it by workspace path, the one key both sides share.
+    const pending = this.startupProgressPendingStart(event.cwd);
+    if (pending === undefined) return;
+    // An idle startup phase means the daemon has nothing left to attribute, so
+    // restore this row's own generic wording rather than clearing the text of a
+    // creation request that has not returned yet.
+    this.queueActivityUpdate(event.activity.phase === "idle"
+      ? creatingPendingSessionActivity(pending.tempId, pending.queuedSends.length)
+      : { ...event.activity, sessionId: pending.tempId });
   }
 
   private startupProgressPendingStart(cwd: string): PendingSessionStart | undefined {

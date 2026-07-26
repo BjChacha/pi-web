@@ -187,6 +187,23 @@ describe("PiSessionService session startup progress", () => {
     await service.dispose();
   });
 
+  it("ends the startup window when extension binding fails, leaving no stale phase label", async () => {
+    const failure = new Error("extension refused to load");
+    const { hub, fake, service } = startupService();
+    fake.session.bindExtensions = () => Promise.reject(failure);
+
+    await expect(service.start("/workspace")).rejects.toBe(failure);
+
+    // The last word on this startup must not be an "active" phase the service is
+    // no longer inside; otherwise a waiting row keeps a label that is now false.
+    expect(startupText(hub)).toEqual([
+      "Creating session: Starting the Pi session",
+      "Creating session: Loading session extensions",
+      "idle",
+    ]);
+    await service.dispose();
+  });
+
   it("keeps startup reporting event-only, writing no session or workspace activity state", async () => {
     const recorder = recordingWorkspaceActivity();
     const failure = new Error("runtime unavailable");

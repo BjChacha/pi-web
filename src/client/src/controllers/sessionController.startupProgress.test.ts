@@ -127,6 +127,32 @@ describe("SessionController session startup progress", () => {
     expect(state.activity).toMatchObject({ sessionId: oldSession.id, label: "Opening session", detail: "Starting the Pi session" });
   });
 
+  it("gives an existing session's startup its own row rather than a pending start in the same workspace", async () => {
+    const existing = { ...oldSession, id: "existing-session", cwd: workspace.path };
+    const state = { current: { ...initialAppState(), selectedWorkspace: workspace, sessions: [existing] } };
+    const { controller, startRequest } = pendingStartController(state);
+
+    const start = controller.startSession();
+    const temporaryId = state.current.selectedSession?.id;
+    if (temporaryId === undefined) throw new Error("Expected temporary session id");
+
+    // Opening an existing session in the same workspace publishes the same cwd as
+    // the pending create. The known id is the proof of which row it belongs to, so
+    // the pending row must keep its own wording instead of the other row's phase.
+    controller.applyGlobalEvent({
+      type: "session.startup",
+      cwd: workspace.path,
+      activity: startupActivity({ sessionId: existing.id, label: "Opening session" }),
+    });
+    runPendingAnimationFrames();
+
+    expect(state.current.sessionActivities[existing.id]).toMatchObject({ label: "Opening session", detail: "Starting the Pi session" });
+    expect(state.current.sessionActivities[temporaryId]?.detail).toBe("Waiting for the backend session to be ready");
+
+    startRequest.resolve({ ...oldSession, id: "backend-session", path: "/tmp/backend-session.jsonl" });
+    await start;
+  });
+
   it("keeps the generic wording when the startup progress cannot be attributed to one row", async () => {
     const state = { current: { ...initialAppState(), selectedWorkspace: workspace, sessions: [] } };
     const { controller, startRequest } = pendingStartController(state);
