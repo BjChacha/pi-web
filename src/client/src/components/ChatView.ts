@@ -7,7 +7,7 @@ import { writeClipboardText } from "../clipboard";
 import { capturePrependScrollAnchor, PREPEND_RESTORE_SETTLE_FRAMES, restorePrependScrollAnchor, type PrependScrollAnchor } from "../chatScrollAnchoring";
 import { shouldRequestEarlierMessages } from "../chatHistoryLoading";
 import { ChatScrollController, distanceFromScrollBottom, findFirstVisibleArticle, isNearScrollBottom, type ChatAnchorScrollPosition, type ChatScrollRestoreResult } from "../chatScrollPosition";
-import type { QueuedSessionMessage, SessionActivity, SessionStatus, SessionWarningSeverity } from "../api";
+import type { AskUserSubmission, PendingAskUser, QueuedSessionMessage, SessionActivity, SessionStatus, SessionWarningSeverity } from "../api";
 import {
   notificationAnnouncementLabel,
   notificationDismissLabel,
@@ -26,6 +26,7 @@ import {
 } from "../sessionNotifications";
 import type { ChatLine, ChatPart } from "./shared";
 import { chatStyles, renderSessionWarningIcon } from "./shared";
+import "./AskUserCard";
 import "./ConversationMeter";
 import "./FormattedText";
 import "./ToolExecutionView";
@@ -192,6 +193,9 @@ export class ChatView extends LitElement {
   @property({ attribute: false }) clientQueuedMessages: QueuedSessionMessage[] = [];
   @property({ attribute: false }) status?: SessionStatus;
   @property({ attribute: false }) activity?: SessionActivity;
+  @property({ attribute: false }) pendingAsk?: PendingAskUser;
+  @property({ attribute: false }) askDraftSessionId = "";
+  @property({ attribute: false }) onSubmitAsk?: (askId: string, submission: AskUserSubmission) => void | Promise<void>;
   @property({ attribute: false }) notificationInbox?: SelectedSessionNotificationView;
   @property({ type: Boolean }) canClearServerQueue = false;
   @property({ attribute: false }) onClearServerQueue?: () => void;
@@ -311,7 +315,7 @@ export class ChatView extends LitElement {
       this.pendingNotificationFocus = undefined;
       this.retainedEmptyNotificationTrayTargetKey = undefined;
     }
-    if (changed.has("messages")) this.pinnedToBottom = this.pinnedToBottom && (this.didChatHeightChange() || this.isNearBottom());
+    if (changed.has("messages") || changed.has("pendingAsk")) this.pinnedToBottom = this.pinnedToBottom && (this.didChatHeightChange() || this.isNearBottom());
   }
 
   protected override update(changed: Map<string, unknown>): void {
@@ -324,7 +328,7 @@ export class ChatView extends LitElement {
     if (changed.has("loadingMore") && !this.loadingMore) this.loadMoreRequested = false;
     if (changed.has("hasMore") && !this.hasMore) this.loadMoreRequested = false;
     if (changed.has("sessionId")) this.restoreScrollPosition();
-    if (!changed.has("sessionId") && changed.has("messages") && this.pinnedToBottom) this.scrollToBottom();
+    if (!changed.has("sessionId") && (changed.has("messages") || changed.has("pendingAsk")) && this.pinnedToBottom) this.scrollToBottom();
     if (changed.has("messages") || changed.has("messageStart") || changed.has("messageTotal") || changed.has("hasMore") || changed.has("loadingMore")) this.scheduleConversationRailUpdate();
     if (changed.has("messages") || changed.has("messageStart") || changed.has("hasMore") || changed.has("loadingMore")) this.continuePendingScrollRestore();
     if (changed.has("messages") || changed.has("hasMore") || changed.has("loadingMore")) this.requestLoadMoreIfNeeded();
@@ -365,6 +369,7 @@ export class ChatView extends LitElement {
           )}
           ${this.renderQueuedMessages()}
           ${this.renderSessionActivity()}
+          ${this.renderOpenAsk()}
         </div>
         ${this.renderActivityDock()}
       </div>
@@ -635,6 +640,17 @@ export class ChatView extends LitElement {
           </div>
         `)}
       </aside>
+    `;
+  }
+
+  private renderOpenAsk() {
+    if (this.pendingAsk === undefined) return null;
+    return html`
+      <ask-user-card
+        .ask=${this.pendingAsk}
+        .draftSessionId=${this.askDraftSessionId}
+        .onSubmit=${this.onSubmitAsk}
+      ></ask-user-card>
     `;
   }
 
