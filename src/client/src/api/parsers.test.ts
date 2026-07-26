@@ -305,6 +305,15 @@ describe("API parsers", () => {
     });
   });
 
+  it("carries the startup marker so an opening session is not mistaken for a working one", () => {
+    const activity = { sessionId: "session-1", phase: "active", label: "Opening session", detail: "Starting the Pi session", at: "2026-07-20T00:00:01.000Z", startup: true };
+
+    expect(parseSessionStartupProgressEvent({ type: "session.startup", activity })).toEqual({ type: "session.startup", activity });
+    // A malformed marker is dropped like any other malformed field rather than
+    // being coerced into "this is startup" or "this is work".
+    expect(() => parseSessionStartupProgressEvent({ type: "session.startup", activity: { ...activity, startup: "yes" } })).toThrow("Expected optional boolean field: startup");
+  });
+
   it("rejects session startup progress that cannot be routed or rendered honestly", () => {
     const activity = { sessionId: "session-1", phase: "active", label: "Creating session", at: "2026-07-20T00:00:01.000Z" };
 

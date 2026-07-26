@@ -90,6 +90,16 @@ describe("notification socket guards", () => {
     })).toBeUndefined();
   });
 
+  it("carries the startup marker through the socket boundary, marker and all", () => {
+    const activity = { sessionId: "session-1", phase: "active", label: "Opening session", detail: "Starting the Pi session", at: "2026-07-20T00:00:01.000Z", startup: true };
+
+    // The marker is what stops an opening session being treated as a working
+    // one, so dropping it in transit would restore the defect for every frame,
+    // including those relayed from a remote machine.
+    expect(parseRealtimeSocketEvent({ type: "session.startup", activity })).toMatchObject({ type: "session.startup", activity: { startup: true } });
+    expect(parseRealtimeSocketEvent({ type: "session.startup", activity: { ...activity, startup: 1 } })).toBeUndefined();
+  });
+
   it("accepts validated session startup progress and drops malformed frames", () => {
     const activity = { sessionId: "session-1", phase: "active", label: "Creating session", detail: "Starting the Pi session", at: "2026-07-20T00:00:01.000Z" };
 

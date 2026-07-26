@@ -300,7 +300,20 @@ function parseSessionActivity(value: unknown): SessionActivity {
     label: requireNonEmptyString(record, "label"),
     ...optionalField("detail", optionalString(record, "detail")),
     at: requireNonEmptyString(record, "at"),
+    ...optionalField("startup", optionalActivityStartupMarker(record)),
   };
+}
+
+/**
+ * The startup marker says the activity is a session opening rather than work in
+ * progress, which decides whether "Stop Active Work" is offered and whether a
+ * reload is blocked. A malformed marker is rejected rather than guessed at.
+ */
+function optionalActivityStartupMarker(record: Record<string, unknown>): boolean | undefined {
+  const value = record["startup"];
+  if (value === undefined) return undefined;
+  if (typeof value !== "boolean") throw new Error("Expected optional boolean field: startup");
+  return value;
 }
 
 function requireSessionActivityPhase(record: Record<string, unknown>, key: string): SessionActivity["phase"] {

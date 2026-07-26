@@ -1328,7 +1328,7 @@ export class SessionController {
     // creation request that has not returned yet.
     this.queueActivityUpdate(event.activity.phase === "idle"
       ? creatingPendingSessionActivity(pending.tempId, pending.queuedSends.length)
-      : { ...event.activity, sessionId: pending.tempId });
+      : pendingStartActivity(event.activity, pending.tempId));
   }
 
   private schedulePendingFlush(): void {
@@ -1427,6 +1427,24 @@ function replacePendingSessionInList(sessions: readonly SessionInfo[], pendingSe
 
 function isClientPendingStartSessionInfo(session: SessionInfo | undefined): session is ClientPendingStartSessionInfo {
   return session !== undefined && "clientPendingStart" in session && session.clientPendingStart === true;
+}
+
+/**
+ * Re-label a startup report onto the browser's own pending create row.
+ *
+ * The daemon's startup marker is dropped: this row stands for a create the user
+ * asked for and is waiting on, which the browser has always reported as active
+ * work in progress, rather than for a session the daemon is opening. Only the
+ * phase text is borrowed, so the row keeps its own `creating · ` appearance.
+ */
+function pendingStartActivity(activity: SessionActivity, sessionId: string): SessionActivity {
+  return {
+    sessionId,
+    phase: activity.phase,
+    label: activity.label,
+    ...(activity.detail === undefined ? {} : { detail: activity.detail }),
+    at: activity.at,
+  };
 }
 
 function creatingPendingSessionActivity(sessionId: string, queuedCount = 0): SessionActivity {

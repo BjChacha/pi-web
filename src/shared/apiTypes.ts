@@ -426,6 +426,14 @@ export interface SessionActivity {
   label: string;
   detail?: string;
   at: string;
+  /**
+   * Set only on the startup window's own reports. A startup phase is genuinely
+   * in progress, so it is published as `active` and rendered like any other
+   * activity, but *starting* a session is not *working* in it: there is nothing
+   * to stop, nothing that blocks reloading from disk, and no workspace-level
+   * work to report. `isSessionActive()` reads this to keep the two apart.
+   */
+  startup?: boolean;
 }
 
 export interface QueuedSessionMessage {

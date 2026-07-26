@@ -3039,10 +3039,15 @@ export class PiSessionService implements SessionRouteService {
    * Unlike {@link publishActivity} this deliberately records nothing: no
    * `activities` entry, no workspace activity, no unread observation. There is
    * no session to own that state, and a failed creation would leave it stranded.
+   *
+   * Every report is marked `startup`, which is what keeps a session that is
+   * merely opening from counting as one doing work. This is the only publisher
+   * that sets the marker, and because it writes no `activities` entry no later
+   * heartbeat re-publication can carry it.
    */
   private publishStartupProgress(sessionId: string, startupToken: string | undefined, label: string, phase: "active" | "idle", detail: string | undefined): void {
     const at = new Date().toISOString();
-    const activity = detail === undefined ? { sessionId, phase, label, at } : { sessionId, phase, label, detail, at };
+    const activity = detail === undefined ? { sessionId, phase, label, at, startup: true } : { sessionId, phase, label, detail, at, startup: true };
     this.events.publishGlobal(startupToken === undefined ? { type: "session.startup", activity } : { type: "session.startup", startupToken, activity });
   }
 

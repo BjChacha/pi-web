@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { isSessionActive } from "../../../shared/activity";
 import { initialAppState } from "../appState";
 import { SessionController } from "./sessionController";
 import { defaultApi, deferred, emptyPage, FakeSocket, oldSession, runPendingAnimationFrames, sessionLookupId, status, workspace, type AppState, type SessionActivity, type SessionInfo } from "./sessionController.testSupport";
@@ -10,6 +11,7 @@ function startupActivity(patch: Partial<SessionActivity> = {}): SessionActivity 
     label: "Creating session",
     detail: "Starting the Pi session",
     at: "2026-07-20T00:00:01.000Z",
+    startup: true,
     ...patch,
   };
 }
@@ -76,6 +78,28 @@ describe("SessionController session startup progress", () => {
     await start;
   });
 
+  it("keeps a pending create row's own appearance while it borrows the daemon's phase text", async () => {
+    const state = { current: { ...initialAppState(), selectedWorkspace: workspace, sessions: [] } };
+    const { controller, startRequest } = pendingStartController(state);
+
+    const start = controller.startSession();
+    const temporaryId = state.current.selectedSession?.id;
+    if (temporaryId === undefined) throw new Error("Expected temporary session id");
+    const beforeStartupProgress = isSessionActive(state.current.status, state.current.activity);
+
+    controller.applyGlobalEvent({ type: "session.startup", startupToken: temporaryId, activity: startupActivity() });
+    runPendingAnimationFrames();
+
+    // This row is the browser's own pending create, not a session being opened.
+    // Substituting the daemon's phase text into it must not silently change what
+    // the row reports about itself, or its indicator would blink off mid-create.
+    expect(state.current.activity?.phase).toBe("active");
+    expect(isSessionActive(state.current.status, state.current.activity)).toBe(beforeStartupProgress);
+
+    startRequest.resolve({ ...oldSession, id: "backend-session", path: "/tmp/backend-session.jsonl" });
+    await start;
+  });
+
   it("restores the generic wording when the daemon has nothing left to attribute", async () => {
     const state = { current: { ...initialAppState(), selectedWorkspace: workspace, sessions: [] } };
     const { controller, startRequest } = pendingStartController(state);
@@ -134,6 +158,29 @@ describe("SessionController session startup progress", () => {
     runPendingAnimationFrames();
 
     expect(state.activity).toMatchObject({ sessionId: oldSession.id, label: "Opening session", detail: "Starting the Pi session" });
+  });
+
+  it("shows an archived session's opening progress without reporting it as active work", () => {
+    const archived = { ...oldSession, id: "archived-session", archived: true, archivedAt: "2026-05-16T00:00:00.000Z" };
+    let state: AppState = { ...initialAppState(), selectedSession: archived, sessions: [archived] };
+    const controller = new SessionController(
+      () => state,
+      (patch) => { state = { ...state, ...patch }; },
+      () => undefined,
+      undefined,
+      { socket: new FakeSocket() },
+    );
+
+    controller.applyGlobalEvent({
+      type: "session.startup",
+      activity: startupActivity({ sessionId: archived.id, label: "Opening session" }),
+    });
+    runPendingAnimationFrames();
+
+    // A read-only session cannot be worked on, so opening one must not make it
+    // look busy — while the text a waiting user reads still arrives.
+    expect(state.activity).toMatchObject({ sessionId: archived.id, label: "Opening session", detail: "Starting the Pi session" });
+    expect(isSessionActive(state.status, state.activity)).toBe(false);
   });
 
   it("gives an existing session's startup its own row rather than a pending start in the same workspace", async () => {

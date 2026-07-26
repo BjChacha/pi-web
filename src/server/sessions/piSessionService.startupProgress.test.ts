@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { PiSessionService, type PiSessionRuntime } from "./piSessionService.js";
 import { CapturingSessionEventHub, emptyArchiveStore, fakeRuntime, sessionGateway, sessionRecord, sessionRef, testModelRuntime } from "./piSessionService.testSupport.js";
+import { isSessionActive } from "../../shared/activity.js";
 import type { SessionActivity, SessionStartupProgressEvent } from "../../shared/apiTypes.js";
 
 const TEST_AGENT_DIR = "/tmp/pi-web-test-agent";
@@ -232,6 +233,34 @@ describe("PiSessionService session startup progress", () => {
       "Creating session: Loading session extensions",
       "idle",
     ]);
+    await service.dispose();
+  });
+
+  it("reports startup progress as starting rather than as work in progress", async () => {
+    const { hub, service } = startupService();
+
+    await service.start("/workspace");
+
+    // Startup phases are published with an "active" phase so the waiting user
+    // sees them, but opening a session is not work: nothing that decides whether
+    // work is in progress may count them.
+    const phases = startupEvents(hub).filter((event) => event.activity.phase === "active");
+    expect(phases).toHaveLength(2);
+    expect(phases.map((event) => isSessionActive(undefined, event.activity))).toEqual([false, false]);
+    await service.dispose();
+  });
+
+  it("still reports a real activity published during startup as work", async () => {
+    const { hub, fake, service } = startupService();
+
+    await service.start("/workspace");
+    fake.emit({ type: "tool_execution_start", toolName: "bash" });
+
+    // The marker belongs to the startup channel alone; an ordinary activity for
+    // the same session still counts, or the fix would hide real work.
+    const running = activityUpdates(hub).filter((activity) => activity.phase === "active");
+    expect(running.length).toBeGreaterThan(0);
+    expect(running.every((activity) => isSessionActive(undefined, activity))).toBe(true);
     await service.dispose();
   });
 
