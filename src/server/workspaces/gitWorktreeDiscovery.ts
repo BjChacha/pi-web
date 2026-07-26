@@ -9,6 +9,10 @@ export interface GitWorktreeInfo {
   branch?: string;
   bare?: boolean;
   detached?: boolean;
+  /** Git reports a linked worktree as prunable when its checkout directory no longer exists. */
+  prunable?: boolean;
+  /** Git reports a locked worktree with a bare `locked` line, optionally followed by a reason. */
+  locked?: boolean;
 }
 
 export async function isGitRepository(path: string): Promise<boolean> {
@@ -22,6 +26,14 @@ export async function isGitRepository(path: string): Promise<boolean> {
 
 export async function discoverGitWorktrees(path: string): Promise<GitWorktreeInfo[]> {
   const { stdout } = await execFileAsync("git", ["-C", path, "worktree", "list", "--porcelain"], { env: sanitizedGitEnv() });
+  return parseGitWorktreeList(stdout);
+}
+
+/**
+ * Parses `git worktree list --porcelain` output into facts only. Deciding which worktrees a
+ * project should show (for example hiding prunable ones) is workspace policy, not parsing.
+ */
+export function parseGitWorktreeList(stdout: string): GitWorktreeInfo[] {
   const chunks = stdout.trim().split(/\n\s*\n/).filter(Boolean);
 
   return chunks.map((chunk) => {
@@ -33,6 +45,8 @@ export async function discoverGitWorktrees(path: string): Promise<GitWorktreeInf
       if (key === "branch") info.branch = value.replace(/^refs\/heads\//, "");
       if (key === "bare") info.bare = true;
       if (key === "detached") info.detached = true;
+      if (key === "prunable") info.prunable = true;
+      if (key === "locked") info.locked = true;
     }
     return info;
   }).filter((w) => w.path);
