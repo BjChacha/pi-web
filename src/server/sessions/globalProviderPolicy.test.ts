@@ -317,6 +317,97 @@ describe("bootstrapAndFreezeGlobalExtensionProviders", () => {
     expect(entries.filter((entry) => entry.message === "ignored provider mutation after global bootstrap")).toEqual([]);
   });
 
+  it("ignores a replay of the catalog it just accepted", async () => {
+    const agentDir = await agentDirWithExtension(GLOBAL_PROVIDER_SOURCE);
+    const runtime = await createTestModelRuntime();
+    const { entries, logger } = capturingLogger();
+
+    await bootstrapAndFreezeGlobalExtensionProviders(runtime, agentDir, logger);
+
+    const refreshed = globalConfigWithModels(["global-model", "refreshed-model"]);
+    runtime.registerProvider("global-config", refreshed);
+    // A per-session `session_start` handler re-sends the same catalog on every
+    // new session. Once applied, that is a replay of the current state, so it
+    // must not be re-applied or logged again. This only holds because an
+    // accepted update rebases the stored baseline; without that rebase every
+    // replay still differs from the original catalog and is accepted forever.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      runtime.registerProvider("global-config", refreshed);
+    }
+
+    // Applied once, then the replays fall through to the de-duplicated
+    // ignored-mutation path exactly like any other rejected registration.
+    expect(entries.filter((entry) => entry.message === "applied models-only provider update after global bootstrap"))
+      .toHaveLength(1);
+    expect(entries
+      .filter((entry) => entry.message === "ignored provider mutation after global bootstrap")
+      .map((entry) => entry.details)).toEqual([
+      { context: "global-provider-bootstrap", operation: "registerProvider", providerId: "global-config" },
+    ]);
+    expect(runtime.getModel("global-config", "refreshed-model")).toBeDefined();
+  });
+
+  it("surfaces an invalid catalog refresh without disturbing the baseline", async () => {
+    // Narrowing the freeze introduced a failure mode the all-or-nothing version
+    // could not have: an accepted call now reaches Pi's validation, so a known
+    // provider sending a malformed catalog gets a real error instead of a silent
+    // no-op. That error must stay visible to the extension — swallowing it would
+    // hide a broken provider — while the recorded baseline and the previously
+    // registered models keep working.
+    //
+    // Models carry their own `api`/`baseUrl` here so that a refreshed catalog
+    // omitting them fails validation.
+    const agentDir = await agentDirWithExtension(`
+      export default function (pi) {
+        pi.registerProvider("per-model-config", {
+          name: "Per Model Config",
+          apiKey: "$PER_MODEL_KEY",
+          models: [{
+            id: "first-model",
+            name: "First Model",
+            api: "openai-completions",
+            baseUrl: "https://per-model.example.com",
+            reasoning: false,
+            input: ["text"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 8192,
+            maxTokens: 1024
+          }]
+        });
+      }
+    `);
+    const runtime = await createTestModelRuntime();
+    const { entries, logger } = capturingLogger();
+
+    await bootstrapAndFreezeGlobalExtensionProviders(runtime, agentDir, logger);
+    const baselineConfig = runtime.getRegisteredProviderConfig("per-model-config");
+    const perModelConfig = (model: NonNullable<ProviderConfigInput["models"]>[number]): ProviderConfigInput => ({
+      name: "Per Model Config",
+      apiKey: "$PER_MODEL_KEY",
+      models: [model],
+    });
+
+    // `catalogModel` omits `api`/`baseUrl`, which this provider needs per model.
+    expect(() => { runtime.registerProvider("per-model-config", perModelConfig(catalogModel("broken-model"))); })
+      .toThrow(/no "api" specified/);
+
+    expect(runtime.getRegisteredProviderConfig("per-model-config")).toBe(baselineConfig);
+    expect(runtime.getModel("per-model-config", "first-model")).toBeDefined();
+    expect(runtime.getModel("per-model-config", "broken-model")).toBeUndefined();
+
+    // The rejected attempt did not poison the baseline, so a valid refresh of
+    // the same provider is still recognized as a models-only update.
+    runtime.registerProvider("per-model-config", perModelConfig({
+      ...catalogModel("second-model"),
+      api: "openai-completions",
+      baseUrl: "https://per-model.example.com",
+    }));
+
+    expect(runtime.getModel("per-model-config", "second-model")).toBeDefined();
+    expect(entries.filter((entry) => entry.message === "applied models-only provider update after global bootstrap"))
+      .toHaveLength(1);
+  });
+
   it("ignores registrations that change any field other than the model catalog", async () => {
     const agentDir = await agentDirWithExtension(GLOBAL_PROVIDER_SOURCE);
     const runtime = await createTestModelRuntime();
