@@ -445,3 +445,71 @@ web/UI service path only.
 **No — this was the final leg.** All five charter finish-line conditions are met and
 `npm run verify` is green, so per the charter this runner stops instead of spawning. The
 branch `feat/worktree-autodetect` is ready for human review and merge.
+
+---
+
+## Post-relay — selected-workspace freshness fix (review follow-up, not a leg)
+
+Triggered by a human review question after the relay finished: "do we have pragmatic
+reasonable and stable code?" I reviewed the production diff against
+`code-quality-architecture` and probed the runtime rather than trusting the leg summaries.
+
+### What the review checked and found sound
+
+- `handleWorkspaceChange` early-returns on equal workspace id → no `clearActiveSession`,
+  no terminal teardown on resume.
+- `WorkspaceList.updated()` re-scrolls on any `workspaces` change, but via
+  `scrollIntoView({ block: "nearest" })`, a no-op when the row is already visible.
+- Open row menu survives refresh: guarded by an id membership check, and ids are path-derived.
+- Stale responses guarded on both machine and project id; background failures go to
+  `onBackgroundError`, never `state.error`, so a flaky resume shows no error toast.
+
+### The one real gap, and the fix
+
+`applyProjectWorkspaces` wrote a fresh `workspaces` array but left `selectedWorkspace`
+pointing at the pre-refresh object. Reproduced with a scratch test: after a refresh where a
+worktree's branch changed outside PI WEB, the list row showed `feature-b` while
+`selectedWorkspace.branch` was still `feature-a`. User-visible in the collapsed Workspaces
+header and the mobile context bar until reselect. Not a regression (both were stale before),
+but a new fresh/stale inconsistency introduced by making the list refresh.
+
+Fixed by re-pointing `selectedWorkspace` at its refreshed entry, keyed by `id`. Safety rests
+on two things: `id` is derived from the path, so this can never change *which* workspace is
+selected; and `handleWorkspaceChange` gates on `id`, so no session/terminal teardown fires.
+The patch is skipped when metadata is unchanged, because `patchChangesState` is
+identity-based and a real HTTP response returns fresh-but-equal objects every resume —
+without that guard every browser focus would push a new object into state.
+
+### Decisions
+
+- **Left `locked` parsed-but-unconsumed.** Flagged it as YAGNI in review, then kept it: it
+  documents the deliberate policy that locked worktrees are *kept*, and that policy is pinned
+  by a real `workspaceService` test. Removing the field would not remove the policy.
+- **Left the two refresh entry points un-deduped.** Both are idempotent, stale-guarded, and
+  ~2ms; cross-path collapsing would add a concept for no user-visible gain.
+- **Compared metadata field-by-field** (`sameWorkspaceMetadata`) rather than `JSON.stringify`,
+  which is key-order sensitive, or a deep-equal helper this file does not otherwise need.
+
+### Checks run
+
+- `npx vitest --run src/client/src/controllers/workspaceController.test.ts` → **9 passed**
+- mutation A, never re-point (restores the original bug) → the re-point test failed, alone
+- mutation B, always re-point (drops the unchanged guard) → the identity test failed, alone
+- `npx eslint` on both changed files → clean; `npm run typecheck` → clean
+- **`npm run verify` → green**: 228 files, **1842 passed**, 2 skipped (was 1840)
+- pre-commit `verify:staged` → 6 files / 26 tests passed
+
+### Artifacts changed
+
+- `src/client/src/controllers/workspaceController.ts` (`refreshedSelection` +
+  `sameWorkspaceMetadata`; `applyProjectWorkspaces` early-returns for the non-selected project)
+- `src/client/src/controllers/workspaceController.test.ts` (+2 tests, 9 total)
+- committed as `79577e4 fix(workspaces): keep selected workspace metadata fresh on refresh`
+- no changeset added: `.changeset/worktree-autodetect.md` already promises the list stays
+  correct without user action, and this fix delivers that promise rather than adding to it
+- `status.md`: new "Post-relay review fix" section and the second invariant recorded
+
+### Blockers
+
+None. No new timer, watcher, process, endpoint, or push channel; no sessiond code touched, so
+**no manual session daemon restart is required**. Branch still ready for review and merge.

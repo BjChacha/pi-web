@@ -7,6 +7,21 @@ green. No further leg was spawned; leg 3 was the last one by design.
 
 Remaining human action: review the branch and merge it. Nothing is blocked.
 
+## Post-relay review fix
+
+A human review question after leg 3 ("do we have pragmatic reasonable and stable code?")
+found one real gap, fixed in `79577e4`: `applyProjectWorkspaces` replaced the list but left
+`selectedWorkspace` pointing at the old object, so a branch switched inside a worktree
+outside PI WEB showed the new name in the list and the old one in the collapsed Workspaces
+header and mobile context bar. Now re-pointed by id, and skipped entirely when metadata is
+unchanged so a normal resume does not churn identity. Two tests added (9 total in
+`workspaceController.test.ts`), each mutation-checked in both directions. `npm run verify`
+green: 1842 passed, 2 skipped.
+
+Reviewed and deliberately left alone: `locked` is parsed but unconsumed (it documents the
+kept-worktree policy and is pinned by a `workspaceService` test), and the two refresh entry
+points are not deduped across each other (idempotent, stale-guarded, ~2ms).
+
 ## Current position
 
 Every charter finish-line condition is satisfied:
@@ -49,7 +64,12 @@ under `#worktree-list-out-of-date`.
 ## Relevant context if anyone picks this branch up
 
 - Commits: `266f941` (server filter), `d0f8f9f` (client refresh method),
-  `84545fb` (wiring + docs + changeset), plus three `docs(relay)` packet commits.
+  `84545fb` (wiring + docs + changeset), `79577e4` (selected-workspace freshness fix),
+  plus the `docs(relay)` packet commits.
+- Second invariant, added by `79577e4`: re-pointing `selectedWorkspace` is safe **only**
+  while it is keyed by `id` and skipped on unchanged metadata. Keying it by anything that can
+  differ between two lists would change the selection on a background refresh; dropping the
+  unchanged-metadata guard would push a new object into state on every browser focus.
 - The invariant to protect on any future edit: **never route a background topology refresh
   through `selectWorkspace`.** It calls `clearActiveSession()` and
   `resetWorkspaceScopedState()` with no already-selected guard, which would close the session
