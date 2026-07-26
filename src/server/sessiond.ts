@@ -77,6 +77,7 @@ await runSessionDaemonStartup({
       logger: app.log,
       ...(spawnTargets === undefined ? {} : { spawnTargets }),
       subsessionsEnabled: spawnTargets !== undefined && config.subsessions,
+      askUserEnabled: config.askUser,
       notificationStore,
       unreadStore,
       // Read-only, so session startup can tell a waiting user that provider

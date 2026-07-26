@@ -54,6 +54,8 @@ import type { SessionRouteLookup, SessionRouteRef, SessionRouteService } from ".
 import { type AuthChange } from "./authService.js";
 import { canonicalizeStoredCwd, cwdPathsEqual } from "../workingDirectory.js";
 import type { WorkspaceActivityService } from "../activity/workspaceActivityService.js";
+import { createAskUserToolDefinition, type AskUserInvocation, type AskUserToolDeps } from "./askUserTool.js";
+import { PendingAskStore, type PendingAskOpenResult } from "./pendingAskStore.js";
 import { createSpawnSessionToolDefinition, type SpawnSessionInvocation, type SpawnSessionResult } from "./spawnSessionTool.js";
 import { createSubsessionToolDefinitions, type SpawnSubsessionInvocation, type SpawnSubsessionResult, type SubsessionCheckResult, type SubsessionReadQuery, type SubsessionReadResult, type SubsessionStatus, type SubsessionSummary, type SubsessionToolDeps } from "./spawnSubsessionTool.js";
 import { buildTranscriptView } from "./subsessionTranscript.js";
@@ -610,11 +612,15 @@ export function createPiWebCustomToolDefinitions(
   delegationEnabled: boolean,
   spawn?: SpawnSessionFn,
   subsessions?: SubsessionToolDeps,
+  askUser?: AskUserToolDeps,
 ) {
   return [
     createPiWebEditToolDefinition(cwd),
     ...(delegationEnabled && spawn !== undefined ? [createSpawnSessionToolDefinition(cwd, { spawn })] : []),
     ...(delegationEnabled && subsessions !== undefined ? createSubsessionToolDefinitions(cwd, subsessions) : []),
+    // Asking the user is not delegation: the questions land in the session the
+    // user is already watching, so tracked children may ask too.
+    ...(askUser === undefined ? [] : [createAskUserToolDefinition(askUser)]),
   ];
 }
 
@@ -623,12 +629,13 @@ function createDefaultRuntimeFactory(
   sessionManagers: Pick<PiSessionManagerGateway, "open">,
   spawn?: SpawnSessionFn,
   subsessions?: SubsessionToolDeps,
+  askUser?: AskUserToolDeps,
 ): PiWebCreateAgentSessionRuntimeFactory {
   return async ({ cwd, agentDir, sessionManager, sessionStartEvent, initialModel, delegationToolsEnabled }) => {
     const services: AgentSessionServices = await createAgentSessionServices({ cwd, agentDir, modelRuntime });
     const resolvedDelegationToolsEnabled = delegationToolsEnabled
       ?? await sessionAllowsDelegationTools(sessionManager, sessionManagers);
-    const customTools = createPiWebCustomToolDefinitions(cwd, resolvedDelegationToolsEnabled, spawn, subsessions);
+    const customTools = createPiWebCustomToolDefinitions(cwd, resolvedDelegationToolsEnabled, spawn, subsessions, askUser);
     const result = await createAgentSessionFromServices({
       services,
       sessionManager,
@@ -686,6 +693,14 @@ export interface PiSessionServiceDependencies {
    * being exposed in releases.
    */
   subsessionsEnabled?: boolean;
+  /**
+   * When true, `ask_user` is available to every session, so an agent can post a
+   * question set to the browser. Independent of the delegation capabilities: the
+   * questions reach the user of the asking session, not another session.
+   */
+  askUserEnabled?: boolean;
+  /** Daemon-lifetime open-ask state; defaults to an in-memory store in tests. */
+  pendingAskStore?: PendingAskStore;
   /** Structured logger for notable runtime events (e.g. spawns). */
   logger?: PiSessionLogger;
   /** Clock seam for cleanup planning tests. */
@@ -748,6 +763,7 @@ export class PiSessionService implements SessionRouteService {
   private readonly notificationStore: SessionNotificationStore;
   private readonly notificationGenerationBySession = new WeakMap<PiAgentSession, SessionNotificationGeneration>();
   private readonly unreadStore: SessionUnreadStore;
+  private readonly pendingAskStore: PendingAskStore;
   private readonly catalogRefreshStatus: CatalogRefreshStatus | undefined;
   private readonly unreadPublicationRetryInitialMs: number;
   private readonly pendingUnreadMutations: SessionUnreadMutation[] = [];
@@ -768,6 +784,7 @@ export class PiSessionService implements SessionRouteService {
     this.now = deps.now ?? (() => new Date());
     this.notificationStore = deps.notificationStore ?? new SessionNotificationStore();
     this.unreadStore = deps.unreadStore ?? new SessionUnreadStore();
+    this.pendingAskStore = deps.pendingAskStore ?? new PendingAskStore();
     this.catalogRefreshStatus = deps.catalogRefreshStatus;
     this.unreadPublicationRetryInitialMs = Math.max(
       0,
@@ -787,6 +804,7 @@ export class PiSessionService implements SessionRouteService {
         check: (parentSessionId, sessionId, parentSessionFile) => this.checkSubsession(parentSessionId, sessionId, parentSessionFile),
         read: (parentSessionId, sessionId, query, parentSessionFile) => this.readSubsession(parentSessionId, sessionId, query, parentSessionFile),
       },
+      deps.askUserEnabled === true ? { open: (input) => this.openAsk(input) } : undefined,
     );
     this.createAgentRuntime = deps.createAgentRuntime ?? defaultCreateAgentRuntime;
     this.workspaceActivity = deps.workspaceActivity;
@@ -1066,6 +1084,19 @@ export class PiSessionService implements SessionRouteService {
       "spawn_subsession started a tracked child session",
     );
     return { sessionId: created.id, cwd: decision.cwd };
+  }
+
+  /**
+   * Register the question set an agent wants the user to answer as the session's
+   * open ask. Deliberately does not wait for the user: `ask_user` terminates the
+   * run and the submitted answers come back later as a follow-up message.
+   *
+   * Rejected question sets throw {@link PendingAskValidationError}, which the
+   * agent loop reports to the model as an error tool result.
+   */
+  // eslint-disable-next-line @typescript-eslint/require-await -- async so a rejected question set becomes a rejection rather than a synchronous throw from a promise-returning method.
+  async openAsk(input: AskUserInvocation): Promise<PendingAskOpenResult> {
+    return this.pendingAskStore.open(input);
   }
 
   /** Summaries of the tracked subsessions spawned by `parentSessionId`. */
