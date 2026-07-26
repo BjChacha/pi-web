@@ -8,10 +8,12 @@ import { InMemoryWorkspaceSelectionMemory, selectPreferredWorkspace, type Worksp
 
 export interface WorkspaceControllerDependencies {
   api?: Pick<typeof defaultApi, "sessions" | "workspaces">;
+  onBackgroundError?: (message: string, error: unknown) => void;
 }
 
 export class WorkspaceController {
   private readonly api: Pick<typeof defaultApi, "sessions" | "workspaces">;
+  private readonly onBackgroundError: (message: string, error: unknown) => void;
 
   constructor(
     private readonly getState: GetState,
@@ -22,6 +24,7 @@ export class WorkspaceController {
     deps: WorkspaceControllerDependencies = {},
   ) {
     this.api = deps.api ?? defaultApi;
+    this.onBackgroundError = deps.onBackgroundError ?? ((message, error) => { console.warn(message, error); });
   }
 
   clearSelection(options?: { updateUrl?: boolean | undefined }) {
@@ -76,6 +79,34 @@ export class WorkspaceController {
     const workspaces = await this.api.workspaces(project.id, selectedMachineId(this.getState()));
     this.applyProjectWorkspaces(project.id, workspaces);
     return workspaces;
+  }
+
+  /**
+   * Re-lists the selected project's workspaces so worktrees created or removed outside
+   * PI WEB become visible, without disturbing the current selection.
+   *
+   * Deliberately never routes through `selectWorkspace`: that has no already-selected
+   * guard, so re-picking the same workspace would still call `clearActiveSession()` and
+   * `resetWorkspaceScopedState()`, closing the session socket and blanking chat, file
+   * tree, git status, and terminal selection. Callers run this on every browser resume,
+   * so applying the list through `applyProjectWorkspaces` alone is the invariant.
+   *
+   * If the selected workspace disappeared, the selection is left alone: the user is
+   * working there and the existing deletion path owns recovery.
+   */
+  async refreshSelectedProjectTopology(): Promise<void> {
+    const state = this.getState();
+    const project = state.selectedProject;
+    if (project === undefined) return;
+    const machineId = selectedMachineId(state);
+    try {
+      const workspaces = await this.api.workspaces(project.id, machineId);
+      const current = this.getState();
+      if (selectedMachineId(current) !== machineId || current.selectedProject?.id !== project.id) return;
+      this.applyProjectWorkspaces(project.id, workspaces);
+    } catch (error) {
+      this.onBackgroundError(`Failed to refresh workspaces for project ${project.id} on ${machineId}`, error);
+    }
   }
 
   async refreshAfterWorkspaceDeleted(projectId: string, workspaceId: string): Promise<void> {
