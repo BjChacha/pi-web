@@ -730,10 +730,12 @@ export class ChatView extends LitElement {
 
   private renderMessage(message: ChatLine, index: number) {
     const toolOnly = this.isToolExecutionOnlyMessage(message);
+    const askUserRecordOnly = this.isAskUserRecordOnlyMessage(message);
+    const shellClass = toolOnly ? "msg tool-execution-shell" : "msg ask-user-record-shell";
     return html`
       ${this.renderScrollMarker(this.messageScrollMarkerId(index))}
-      <article class=${toolOnly ? "msg tool-execution-shell" : `msg ${message.role}`} data-index=${index} data-scroll-anchor-id=${this.messageAnchorKey(index)}>
-        ${toolOnly ? null : this.renderMessageHeader(message, String(index))}
+      <article class=${toolOnly || askUserRecordOnly ? shellClass : `msg ${message.role}`} data-index=${index} data-scroll-anchor-id=${this.messageAnchorKey(index)}>
+        ${toolOnly || askUserRecordOnly ? null : this.renderMessageHeader(message, String(index))}
         ${message.parts.map((part) => this.renderPart(part, message))}
       </article>
     `;
@@ -752,6 +754,10 @@ export class ChatView extends LitElement {
 
   private isToolExecutionOnlyMessage(message: ChatLine): boolean {
     return message.role === "tool" && message.parts.length > 0 && message.parts.every((part) => part.type === "toolExecution");
+  }
+
+  private isAskUserRecordOnlyMessage(message: ChatLine): boolean {
+    return message.parts.length > 0 && message.parts.every((part) => part.type === "askUserRecord");
   }
 
   private renderMessageGroup(messages: ChatLine[], startIndex: number, endIndex: number, defaultOpen: boolean) {
@@ -872,6 +878,13 @@ export class ChatView extends LitElement {
         <strong>Loaded ${part.name}</strong>
         <small>read ${part.path}</small>
       </div>
+    `;
+    if (part.type === "askUserRecord") return html`
+      <ask-user-card
+        class="part"
+        .outcome=${part.outcome}
+        .draftSessionId=${this.askDraftSessionId}
+      ></ask-user-card>
     `;
     if (part.type === "image") {
       const { src, alt } = chatImagePartSource(part);

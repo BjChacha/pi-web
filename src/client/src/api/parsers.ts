@@ -290,7 +290,7 @@ function parseAskUserQuestionRecord(value: unknown): AskUserQuestionRecord {
   return { question, answered, values, ...(otherText === undefined ? {} : { otherText }) };
 }
 
-function parseAskUserOutcome(value: unknown): AskUserOutcome {
+export function parseAskUserOutcome(value: unknown): AskUserOutcome {
   const record = requireRecord(value);
   const questions = boundedArrayOf(record["questions"], parseAskUserQuestionRecord, ASK_USER_QUESTION_LIMIT, "questions");
   const answeredCount = requireNonNegativeSafeInteger(record, "answeredCount");
