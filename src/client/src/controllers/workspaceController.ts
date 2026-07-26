@@ -1,5 +1,5 @@
 import { api as defaultApi, type Project, type Workspace } from "../api";
-import { resetWorkspaceScopedState } from "../appState";
+import { resetWorkspaceScopedState, type AppState } from "../appState";
 import { mergeCachedNewSessions } from "../cachedNewSessions";
 import { machineProjectKey } from "../machineKeys";
 import { selectedMachineId, type GetState, type RouteTarget, type SetState, type UpdateUrl } from "./types";
@@ -122,8 +122,26 @@ export class WorkspaceController {
   private applyProjectWorkspaces(projectId: string, workspaces: Workspace[]): void {
     const state = this.getState();
     const workspacesByProjectId = { ...state.workspacesByProjectId, [projectId]: workspaces };
-    if (state.selectedProject?.id === projectId) this.setState({ workspaces, workspacesByProjectId });
-    else this.setState({ workspacesByProjectId });
+    if (state.selectedProject?.id !== projectId) {
+      this.setState({ workspacesByProjectId });
+      return;
+    }
+    this.setState({ workspaces, workspacesByProjectId, ...this.refreshedSelection(state.selectedWorkspace, workspaces) });
+  }
+
+  /**
+   * Re-points `selectedWorkspace` at its refreshed entry when metadata changed outside PI WEB
+   * (a branch switched in the worktree, say), so the workspace list and the surfaces that read
+   * the selected workspace cannot disagree. Keyed by id, which is derived from the path, so
+   * this never changes *which* workspace is selected and never triggers the session/terminal
+   * teardown in `handleWorkspaceChange`. Returns nothing when the entry is gone or unchanged,
+   * so an unchanged refresh does not churn object identity into state.
+   */
+  private refreshedSelection(selected: Workspace | undefined, workspaces: Workspace[]): Pick<AppState, "selectedWorkspace"> | undefined {
+    if (selected === undefined) return undefined;
+    const refreshed = workspaces.find((candidate) => candidate.id === selected.id);
+    if (refreshed === undefined || sameWorkspaceMetadata(selected, refreshed)) return undefined;
+    return { selectedWorkspace: refreshed };
   }
 }
 
@@ -133,5 +151,14 @@ export function canDeleteWorkspace(workspace: Workspace | undefined): boolean {
 
 function selectFallbackWorkspace(workspaces: Workspace[]): Workspace | undefined {
   return workspaces.find((workspace) => workspace.isMain) ?? workspaces[0];
+}
+
+function sameWorkspaceMetadata(left: Workspace, right: Workspace): boolean {
+  return left.path === right.path
+    && left.label === right.label
+    && left.branch === right.branch
+    && left.isMain === right.isMain
+    && left.isGitRepo === right.isGitRepo
+    && left.isGitWorktree === right.isGitWorktree;
 }
 

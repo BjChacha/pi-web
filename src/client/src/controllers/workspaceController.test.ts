@@ -220,6 +220,59 @@ describe("WorkspaceController.refreshSelectedProjectTopology", () => {
     expect(test.backgroundErrors).toEqual([{ message: `Failed to refresh workspaces for project ${repo.id} on local`, error: failure }]);
   });
 
+  it("re-points the selected workspace at refreshed metadata when its branch changed outside PI WEB", async () => {
+    const repo = project("p1", "/repo");
+    const main = workspace(repo.id, repo.path, { isMain: true });
+    const selected = { ...workspace(repo.id, "/repo-feature"), label: "feature-a", branch: "feature-a" };
+    const switched = { ...selected, label: "feature-b", branch: "feature-b" };
+    const loadWorkspaces = vi.fn().mockResolvedValue([main, switched]);
+    const test = harness(
+      {
+        selectedMachine: machine("local"),
+        projects: [repo],
+        selectedProject: repo,
+        selectedWorkspace: selected,
+        workspaces: [main, selected],
+        workspacesByProjectId: { [repo.id]: [main, selected] },
+        selectedSession: session(selected.path),
+      },
+      loadWorkspaces,
+    );
+
+    await test.controller.refreshSelectedProjectTopology();
+
+    // Same workspace (same id/path), so the session must survive; only the stale label moves.
+    expect(test.state().selectedWorkspace).toEqual(switched);
+    expect(test.state().selectedWorkspace?.id).toBe(selected.id);
+    expect(test.state().selectedSession).toBeDefined();
+    expect(test.clearActiveSession).not.toHaveBeenCalled();
+  });
+
+  it("leaves the selected workspace object untouched when the refresh returns identical metadata", async () => {
+    const repo = project("p1", "/repo");
+    const main = workspace(repo.id, repo.path, { isMain: true });
+    const selected = workspace(repo.id, "/repo-feature");
+    // A fresh, equal object, exactly what a real HTTP response produces every resume.
+    const loadWorkspaces = vi.fn().mockResolvedValue([{ ...main }, { ...selected }]);
+    const test = harness(
+      {
+        selectedMachine: machine("local"),
+        projects: [repo],
+        selectedProject: repo,
+        selectedWorkspace: selected,
+        workspaces: [main, selected],
+        workspacesByProjectId: { [repo.id]: [main, selected] },
+      },
+      loadWorkspaces,
+    );
+
+    await test.controller.refreshSelectedProjectTopology();
+
+    // Identity preserved: an unchanged resume must not churn selected-workspace identity
+    // into state, or every focus would re-render surfaces keyed on this object.
+    expect(test.state().selectedWorkspace).toBe(selected);
+  });
+
   it("does not request anything when no project is selected", async () => {
     const loadWorkspaces = vi.fn();
     const test = harness({ selectedMachine: machine("local") }, loadWorkspaces);
