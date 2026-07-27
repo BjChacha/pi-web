@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { afterEach, describe, expect, it } from "vitest";
-import type { Machine, MachineHealth, MachineStatus } from "../api";
+import type { Machine, MachineHealth, MachineStatus, WorkspaceActivity } from "../api";
 import { canRemoveMachine, MachineList } from "./MachineList";
 
 afterEach(() => {
@@ -40,17 +40,42 @@ describe("machine unread indicator", () => {
 
     expect(list.shadowRoot?.querySelector(".activity-indicator.unread")).toBeNull();
   });
+
+  it("wraps the work dot in an unread ring when a machine is busy and unread", async () => {
+    const list = await mountMachineList(
+      [machine("local", "local"), machine("remote-a", "remote")],
+      new Set(["local", "remote-a"]),
+      {},
+      {
+        local: { "/repo": workspaceActivity("/repo", true, false) },
+        "remote-a": { "/repo": workspaceActivity("/repo", false, true) },
+      },
+    );
+
+    const localRing = rowFor(list, "local").querySelector(".unread-ring");
+    expect(localRing?.querySelector(".activity-indicator.session")).not.toBeNull();
+    expect(localRing?.getAttribute("title")).toBe("Unread sessions on this machine · Machine active");
+
+    const remoteRing = rowFor(list, "remote-a").querySelector(".unread-ring");
+    expect(remoteRing?.querySelector(".activity-indicator.terminal")).not.toBeNull();
+    expect(remoteRing?.getAttribute("title")).toBe("Unread sessions on this machine · Machine terminal active");
+
+    // One mark per row: the ring replaces the standalone unread dot.
+    expect(rowFor(list, "local").querySelector(".activity-indicator.unread")).toBeNull();
+  });
 });
 
 async function mountMachineList(
   machines: Machine[],
   unreadMachineIds: ReadonlySet<string>,
   statuses: Record<string, MachineHealth> = {},
+  activities: Record<string, Record<string, WorkspaceActivity>> = {},
 ): Promise<MachineList> {
   const list = new MachineList();
   list.machines = machines;
   list.unreadMachineIds = unreadMachineIds;
   list.statuses = statuses;
+  list.activities = activities;
   document.body.append(list);
   await list.updateComplete;
   return list;
@@ -65,6 +90,10 @@ function rowFor(list: MachineList, machineName: string): Element {
 
 function unreadDot(row: Element): Element | null {
   return row.querySelector(".activity-indicator.unread");
+}
+
+function workspaceActivity(cwd: string, hasSessionActivity: boolean, hasTerminalActivity: boolean): WorkspaceActivity {
+  return { cwd, hasSessionActivity, hasTerminalActivity, updatedAt: "2026-06-04T00:00:00.000Z" };
 }
 
 function machine(id: string, kind: Machine["kind"]): Machine {

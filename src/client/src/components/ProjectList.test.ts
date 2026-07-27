@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { afterEach, describe, expect, it } from "vitest";
-import type { Project } from "../api";
+import type { Project, WorkspaceActivity } from "../api";
 import { ProjectList } from "./ProjectList";
 
 afterEach(() => {
@@ -27,6 +27,18 @@ describe("project unread indicator", () => {
 
     expect(list.shadowRoot?.querySelector(".activity-indicator.unread")).toBeNull();
   });
+
+  it("wraps the work dot in an unread ring when the project is busy and unread", async () => {
+    const list = await mountProjectList([project("project-a")], new Set(["project-a"]));
+    list.activities = { "/repo/project-a": workspaceActivity("/repo/project-a", true, false) };
+    await list.updateComplete;
+
+    const row = rowFor(list, "project-a");
+    const ring = row.querySelector(".unread-ring");
+    expect(ring?.querySelector(".activity-indicator.session")).not.toBeNull();
+    expect(ring?.getAttribute("title")).toBe("Unread sessions in this project · Project active");
+    expect(row.querySelector(".activity-indicator.unread")).toBeNull();
+  });
 });
 
 async function mountProjectList(projects: Project[], unreadProjectIds: ReadonlySet<string>): Promise<ProjectList> {
@@ -47,6 +59,10 @@ function rowFor(list: ProjectList, projectName: string): Element {
 
 function unreadDot(row: Element): Element | null {
   return row.querySelector(".activity-indicator.unread");
+}
+
+function workspaceActivity(cwd: string, hasSessionActivity: boolean, hasTerminalActivity: boolean): WorkspaceActivity {
+  return { cwd, hasSessionActivity, hasTerminalActivity, updatedAt: "2026-06-04T00:00:00.000Z" };
 }
 
 function project(id: string): Project {

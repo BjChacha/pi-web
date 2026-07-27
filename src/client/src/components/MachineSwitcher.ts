@@ -66,7 +66,7 @@ export class MachineSwitcher extends LitElement implements KeyboardNavigableSect
           @click=${(event: MouseEvent) => { this.toggleMenu(event.currentTarget); }}
           @keydown=${(event: KeyboardEvent) => { this.handleSwitcherButtonKeydown(event); }}
         >
-          ${this.renderActivity(selected)}${this.renderUnread(selected)}
+          ${this.renderActivity(selected)}
           <span class="machine-switcher-text">
             <span class="machine-switcher-kicker">Machine</span>
             <span class="machine-switcher-label">${label}</span>
@@ -98,7 +98,7 @@ export class MachineSwitcher extends LitElement implements KeyboardNavigableSect
           @click=${() => { this.select(machine); }}
           @keydown=${(event: KeyboardEvent) => { this.handleMachineOptionKeydown(event); }}
         >
-          <span class="machine-option-name">${this.renderActivity(machine)}${this.renderUnread(machine)}<span>${machine.name}</span></span>
+          <span class="machine-option-name">${this.renderActivity(machine)}<span>${machine.name}</span></span>
           <small>${machine.kind === "local" ? "Local Pi Web" : machine.baseUrl ?? "Remote Pi Web"} · ${machineStatusLabel(status)}</small>
         </button>
         ${hasActions ? html`
@@ -124,16 +124,11 @@ export class MachineSwitcher extends LitElement implements KeyboardNavigableSect
 
   private renderActivity(machine: Machine): TemplateResult | undefined {
     const status = machineStatus(machine, this.statuses);
-    if (status === "offline" || status === "error") return undefined;
-    const kind = machineActivityIndicator(this.activities[machine.id]);
-    return renderActivityIndicator(kind, kind === "terminal" ? "Machine terminal active" : "Machine active");
-  }
-
-  private renderUnread(machine: Machine): TemplateResult | undefined {
-    // Unread is independent of machine activity: an offline machine keeps its
-    // last-known unread state (stale-but-present still counts).
-    if (!this.unreadMachineIds.has(machine.id)) return undefined;
-    return renderActivityIndicator("unread", "Unread sessions on this machine");
+    // Unread survives offline: an offline machine keeps its last-known unread
+    // state (stale-but-present still counts), so only the work dot is gated.
+    const kind = status === "offline" || status === "error" ? undefined : machineActivityIndicator(this.activities[machine.id]);
+    const unreadLabel = this.unreadMachineIds.has(machine.id) ? "Unread sessions on this machine" : undefined;
+    return renderActivityIndicator(kind, kind === "terminal" ? "Machine terminal active" : "Machine active", unreadLabel);
   }
 
   private selectedMachine(): Machine | undefined {
@@ -296,6 +291,8 @@ export class MachineSwitcher extends LitElement implements KeyboardNavigableSect
     .activity-indicator.terminal { border-radius: 2px; background: var(--pi-accent); }
     .activity-indicator.sending { border-radius: 50%; background: var(--pi-warning); }
     .activity-indicator.unread { border-radius: 50%; background: var(--pi-accent); animation: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--pi-accent) 20%, transparent); }
+    .unread-ring { flex: 0 0 auto; box-sizing: border-box; display: inline-grid; place-items: center; width: 9px; height: 9px; border: 1.5px solid var(--pi-accent); border-radius: 50%; }
+    .unread-ring .activity-indicator { width: 5px; height: 5px; }
     .machine-switcher-menu { position: fixed; z-index: 10000; box-sizing: border-box; min-width: min(280px, calc(100vw - 16px)); overflow: auto; padding: 4px; border: 1px solid var(--pi-border); border-radius: 10px; background: var(--pi-surface); box-shadow: 0 8px 24px var(--pi-shadow); }
     .machine-option { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px; align-items: stretch; margin: 2px 0; }
     .machine-option.no-actions { grid-template-columns: minmax(0, 1fr); }

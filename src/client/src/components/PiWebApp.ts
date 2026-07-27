@@ -2193,11 +2193,7 @@ export class PiWebApp extends LitElement {
   }
 
   private mobileMainTabs(): AppMobileMainTab[] {
-    const unreadCount = unreadSessionCount(this.state.sessions, this.unreadSessionIds, {
-      statuses: this.state.sessionStatuses,
-      activities: this.state.sessionActivities,
-      sending: this.state.sendingPrompts,
-    });
+    const unreadCount = unreadSessionCount(this.state.sessions, this.unreadSessionIds);
     return [
       {
         id: "navigation",

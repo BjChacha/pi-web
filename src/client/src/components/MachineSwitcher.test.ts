@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { afterEach, describe, expect, it } from "vitest";
-import type { Machine } from "../api";
+import type { Machine, WorkspaceActivity } from "../api";
 import { MachineSwitcher } from "./MachineSwitcher";
 
 afterEach(() => {
@@ -35,6 +35,19 @@ describe("machine-switcher unread indicator", () => {
     expect(unreadDot(optionFor(switcher, "remote-a"))).toBeNull();
     expect(unreadDot(optionFor(switcher, "remote-b"))).not.toBeNull();
   });
+
+  it("wraps the work dot in an unread ring when the machine is busy and unread", async () => {
+    const switcher = await mountSwitcher([machine("local", "local")], new Set(["local"]));
+    switcher.activities = { local: { "/repo": workspaceActivity("/repo", true, false) } };
+    await switcher.updateComplete;
+
+    const button = switcherButton(switcher);
+    const ring = button.querySelector(".unread-ring");
+    expect(ring?.querySelector(".activity-indicator.session")).not.toBeNull();
+    expect(ring?.getAttribute("title")).toBe("Unread sessions on this machine · Machine active");
+    // One mark only: the ring replaces the standalone unread dot.
+    expect(button.querySelector(".activity-indicator.unread")).toBeNull();
+  });
 });
 
 async function mountSwitcher(machines: Machine[], unreadMachineIds: ReadonlySet<string>): Promise<MachineSwitcher> {
@@ -64,6 +77,10 @@ function optionFor(switcher: MachineSwitcher, machineName: string): Element {
 
 function unreadDot(option: Element): Element | null {
   return option.querySelector(".activity-indicator.unread");
+}
+
+function workspaceActivity(cwd: string, hasSessionActivity: boolean, hasTerminalActivity: boolean): WorkspaceActivity {
+  return { cwd, hasSessionActivity, hasTerminalActivity, updatedAt: "2026-06-04T00:00:00.000Z" };
 }
 
 function machine(id: string, kind: Machine["kind"]): Machine {

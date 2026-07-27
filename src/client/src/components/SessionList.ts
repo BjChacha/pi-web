@@ -110,11 +110,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     const currentSelectableSessions = currentRows.map((row) => row.session).filter((session) => sessionSelectionScope(session) === "current");
     const archivedRows = sessionRows(this.sessions.filter((session) => session.archived === true && !currentRowIds.has(session.id)));
     const descendantCounts = unarchivedDescendantCounts(this.sessions);
-    const unreadCount = unreadSessionCount(currentSelectableSessions, this.unreadSessionIds, {
-      statuses: this.statuses,
-      activities: this.activities,
-      sending: this.sending,
-    });
+    const unreadCount = unreadSessionCount(currentSelectableSessions, this.unreadSessionIds);
     return html`
       <section>
         ${this.renderHeading(currentRows.length + archivedRows.length, currentSelectableSessions, unreadCount)}
@@ -253,14 +249,15 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     const bulkSelected = showsCheckbox && this.selectedSessionIds.has(session.id);
     const status = this.statuses[session.id];
     const activity = this.activities[session.id];
-    const indicatorKind = sessionRowActivityKind(session, status, activity, this.sending[session.id] === true, this.unreadSessionIds.has(session.id));
+    const indicatorKind = sessionRowActivityKind(session, status, activity, this.sending[session.id] === true);
+    const unread = sessionRowUnread(session, this.unreadSessionIds);
     const persistenceOptions = this.sessionPersistenceOptions();
     const canArchive = isArchivableSessionInfo(session, status, persistenceOptions);
     const canDeleteTransient = isTransientNewSessionInfo(session, status, persistenceOptions);
     const canReloadSession = canArchive && this.canReload;
     return html`
       <div
-        class="action-row ${this.selected?.id === session.id ? "selected" : ""} ${bulkSelected ? "bulk-selected" : ""} ${session.archived === true ? "archived" : ""} ${selectionActive ? "selecting" : ""} ${indicatorKind === "unread" ? "unread" : ""}"
+        class="action-row ${this.selected?.id === session.id ? "selected" : ""} ${bulkSelected ? "bulk-selected" : ""} ${session.archived === true ? "archived" : ""} ${selectionActive ? "selecting" : ""} ${unread ? "unread" : ""}"
         style=${`--depth:${String(cappedDepth)}`}
         tabindex="0"
         title=${session.path}
@@ -270,7 +267,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
         <div class="action-main ${selectionActive ? "selecting" : ""}">
           ${showsCheckbox ? html`<input class="session-checkbox" type="checkbox" aria-label=${`Select ${sessionLabel(session)}`} .checked=${bulkSelected} @click=${(event: MouseEvent) => { event.stopPropagation(); }} @change=${() => { this.toggleSelected(session.id); }}>` : null}
           <span class="action-name-line"><span class="action-name" dir="auto">${row.depth > 0 ? html`<span class="tree-marker">↳</span>` : null}${sessionLabel(session)}${row.depth > 2 ? html` <span class="badge">depth ${row.depth}</span>` : null}${row.hasMissingParent ? html` <span class="badge">parent unavailable</span>` : null}</span></span><small>${this.renderSessionMetaPrefix(session, status, activity)}${String(session.messageCount)} messages</small>
-          ${this.renderActivity(indicatorKind)}
+          ${this.renderActivity(indicatorKind, unread)}
         </div>
         <div class="action-menu">
           <button class="action-menu-toggle" title="Session actions" @click=${(event: MouseEvent) => { event.stopPropagation(); this.toggleMenu(session.id, event.currentTarget); }}>⋯</button>
@@ -436,13 +433,9 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     return { authoritative: this.authoritativeSessionPersistence };
   }
 
-  private renderActivity(kind: ActivityIndicatorKind | undefined) {
-    const label = kind === "sending"
-      ? "Sending message"
-      : kind === "unread"
-        ? "Unread session activity"
-        : "Session active";
-    return renderActionActivityIndicator(kind, label);
+  private renderActivity(kind: ActivityIndicatorKind | undefined, unread: boolean) {
+    const label = kind === "sending" ? "Sending message" : "Session active";
+    return renderActionActivityIndicator(kind, label, unread ? "Unread session activity" : undefined);
   }
 
   static override styles = [listStyles, css`
@@ -477,19 +470,8 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
 export function unreadSessionCount(
   sessions: readonly SessionInfo[],
   unreadSessionIds: ReadonlySet<string>,
-  runtime: {
-    statuses?: Record<string, SessionStatus> | undefined;
-    activities?: Record<string, SessionActivity> | undefined;
-    sending?: Record<string, true> | undefined;
-  } = {},
 ): number {
-  return sessions.filter((session) => sessionRowActivityKind(
-    session,
-    runtime.statuses?.[session.id],
-    runtime.activities?.[session.id],
-    runtime.sending?.[session.id] === true,
-    unreadSessionIds.has(session.id),
-  ) === "unread").length;
+  return sessions.filter((session) => sessionRowUnread(session, unreadSessionIds)).length;
 }
 
 function sessionSelectionScope(session: SessionInfo): SessionSelectionScope {
@@ -528,24 +510,34 @@ function unarchivedDescendantCounts(sessions: SessionInfo[]): Map<string, number
 
 /**
  * Resolve the activity indicator kind for a session row, or undefined when the
- * row should show no indicator. Pure so it can be unit-tested without rendering.
+ * row should show no work dot. Pure so it can be unit-tested without rendering.
  *
  * "sending" (client-side upload in flight) is reported with its own kind, and
  * takes precedence over server activity, so it can be colored distinctly to
- * signal that it is not yet propagated to workspace/machine activity. Unread is
- * the idle fallback, so it never replaces an indicator for ongoing work.
+ * signal that it is not yet propagated to workspace/machine activity. Unread
+ * is not a kind: it is an attention flag resolved by `sessionRowUnread` and
+ * rendered as a ring around this dot (or a filled dot when this is undefined).
  */
 export function sessionRowActivityKind(
   session: SessionInfo,
   status: SessionStatus | undefined,
   activity: SessionActivity | undefined,
   sending: boolean,
-  unread = false,
 ): ActivityIndicatorKind | undefined {
   if (isCachedNewSessionInfo(session) || session.archived === true) return undefined;
   if (sending) return "sending";
   if (isSessionActive(status, activity)) return "session";
-  return unread ? "unread" : undefined;
+  return undefined;
+}
+
+/**
+ * Whether a session row carries the unread attention flag. Cached-new and
+ * archived sessions can never be unread: they have no server-side unread
+ * completions to acknowledge.
+ */
+export function sessionRowUnread(session: SessionInfo, unreadSessionIds: ReadonlySet<string>): boolean {
+  if (isCachedNewSessionInfo(session) || session.archived === true) return false;
+  return unreadSessionIds.has(session.id);
 }
 
 export function sessionRowsForCurrentTree(sessions: SessionInfo[]): SessionRow[] {

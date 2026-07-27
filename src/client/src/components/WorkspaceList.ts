@@ -4,7 +4,7 @@ import type { Workspace, WorkspaceActivity } from "../api";
 import type { WorkspaceLabelItem } from "../plugins/types";
 import { workspaceActivityFor, workspaceActivityIndicator } from "../workspaceActivity";
 import { actionMenuPanelStyle } from "./actionMenu";
-import { renderActionActivityIndicator, renderActivityIndicator } from "./activityBadge";
+import { renderActionActivityIndicator } from "./activityBadge";
 import type { KeyboardNavigableSection } from "./navigationFocus";
 import { activateSelectableRow, focusSelectedOrFirstSelectableRow, handleSelectableRowKeyboard } from "./selectableRow";
 import { listStyles } from "./shared";
@@ -94,14 +94,14 @@ export class WorkspaceList extends LitElement implements KeyboardNavigableSectio
 
   private renderActivity(workspace: Workspace): TemplateResult | undefined {
     const kind = workspaceActivityIndicator(workspaceActivityFor(workspace, this.activities));
-    return renderActionActivityIndicator(kind, kind === "terminal" ? "Workspace terminal active" : "Workspace active");
+    const unreadLabel = this.unreadWorkspaceIds.has(workspace.id) ? "Unread sessions in this workspace" : undefined;
+    return renderActionActivityIndicator(kind, kind === "terminal" ? "Workspace terminal active" : "Workspace active", unreadLabel);
   }
 
   private renderWorkspaceMain(label: string, items: WorkspaceLabelItem[], workspace: Workspace): TemplateResult {
     return html`
       <span class="workspace-primary">
         <span class="workspace-primary-label">${label}</span>
-        ${this.renderUnread(workspace)}
         ${this.isDeleting(workspace) ? html`<span class="workspace-status">Deleting…</span>` : null}
       </span>
       ${items.length === 0 ? null : html`
@@ -111,11 +111,6 @@ export class WorkspaceList extends LitElement implements KeyboardNavigableSectio
       `}
       ${this.renderActivity(workspace)}
     `;
-  }
-
-  private renderUnread(workspace: Workspace): TemplateResult | undefined {
-    if (!this.unreadWorkspaceIds.has(workspace.id)) return undefined;
-    return renderActivityIndicator("unread", "Unread sessions in this workspace");
   }
 
   private renderWorkspaceMenu(label: string, items: WorkspaceLabelItem[], workspace: Workspace): TemplateResult {

@@ -3,7 +3,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import type { Project, Workspace, WorkspaceActivity } from "../api";
 import { projectActivityIndicator } from "../workspaceActivity";
 import { actionMenuPanelStyle } from "./actionMenu";
-import { renderActionActivityIndicator, renderActivityIndicator } from "./activityBadge";
+import { renderActionActivityIndicator } from "./activityBadge";
 import type { KeyboardNavigableSection } from "./navigationFocus";
 import { activateSelectableRow, focusSelectedOrFirstSelectableRow, handleSelectableRowKeyboard } from "./selectableRow";
 import { listStyles } from "./shared";
@@ -65,7 +65,7 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
                 @keydown=${(event: KeyboardEvent) => { this.handleProjectKeydown(event, project); }}
               >
                 <div class="action-main">
-                  <span class="workspace-primary"><span class="workspace-primary-label">${project.name}</span>${this.renderUnread(project)}</span><small>${project.path}</small>
+                  <span class="workspace-primary"><span class="workspace-primary-label">${project.name}</span></span><small>${project.path}</small>
                   ${this.renderActivity(project)}
                 </div>
                 <div class="action-menu">
@@ -102,12 +102,8 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
 
   private renderActivity(project: Project) {
     const kind = projectActivityIndicator(project, this.workspacesByProjectId[project.id] ?? [], this.activities);
-    return renderActionActivityIndicator(kind, kind === "terminal" ? "Project terminal active" : "Project active");
-  }
-
-  private renderUnread(project: Project) {
-    if (!this.unreadProjectIds.has(project.id)) return undefined;
-    return renderActivityIndicator("unread", "Unread sessions in this project");
+    const unreadLabel = this.unreadProjectIds.has(project.id) ? "Unread sessions in this project" : undefined;
+    return renderActionActivityIndicator(kind, kind === "terminal" ? "Project terminal active" : "Project active", unreadLabel);
   }
 
   private toggleMenu(projectId: string, target: EventTarget | null) {

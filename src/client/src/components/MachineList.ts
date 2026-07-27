@@ -3,7 +3,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import type { Machine, MachineHealth, WorkspaceActivity } from "../api";
 import { machineActivityIndicator } from "../workspaceActivity";
 import { actionMenuPanelStyle } from "./actionMenu";
-import { renderActionActivityIndicator, renderActivityIndicator } from "./activityBadge";
+import { renderActionActivityIndicator } from "./activityBadge";
 import type { KeyboardNavigableSection } from "./navigationFocus";
 import { activateSelectableRow, focusSelectedOrFirstSelectableRow, handleSelectableRowKeyboard } from "./selectableRow";
 import { listStyles } from "./shared";
@@ -76,7 +76,7 @@ export class MachineList extends LitElement implements KeyboardNavigableSection 
         @keydown=${(event: KeyboardEvent) => { this.handleMachineKeydown(event, machine); }}
       >
         <div class="action-main">
-          <span class="action-name machine-primary"><span class="machine-primary-label">${machine.name}</span>${this.renderUnread(machine)}</span><small>${machine.kind === "local" ? "Local Pi Web" : machine.baseUrl ?? "Remote Pi Web"} · ${statusLabel}</small>
+          <span class="action-name machine-primary"><span class="machine-primary-label">${machine.name}</span></span><small>${machine.kind === "local" ? "Local Pi Web" : machine.baseUrl ?? "Remote Pi Web"} · ${statusLabel}</small>
           ${this.renderActivity(machine)}
         </div>
         ${hasRemoveAction ? this.renderMachineMenu(machine) : null}
@@ -86,16 +86,11 @@ export class MachineList extends LitElement implements KeyboardNavigableSection 
 
   private renderActivity(machine: Machine) {
     const status = this.statuses[machine.id]?.status ?? machine.status;
-    if (status === "offline" || status === "error") return undefined;
-    const kind = machineActivityIndicator(this.activities[machine.id]);
-    return renderActionActivityIndicator(kind, kind === "terminal" ? "Machine terminal active" : "Machine active");
-  }
-
-  private renderUnread(machine: Machine) {
-    // Unread is independent of machine activity: an offline machine keeps its
-    // last-known unread state (stale-but-present still counts).
-    if (!this.unreadMachineIds.has(machine.id)) return undefined;
-    return renderActivityIndicator("unread", "Unread sessions on this machine");
+    // Unread survives offline: an offline machine keeps its last-known unread
+    // state (stale-but-present still counts), so only the work dot is gated.
+    const kind = status === "offline" || status === "error" ? undefined : machineActivityIndicator(this.activities[machine.id]);
+    const unreadLabel = this.unreadMachineIds.has(machine.id) ? "Unread sessions on this machine" : undefined;
+    return renderActionActivityIndicator(kind, kind === "terminal" ? "Machine terminal active" : "Machine active", unreadLabel);
   }
 
   private renderMachineMenu(machine: Machine) {
