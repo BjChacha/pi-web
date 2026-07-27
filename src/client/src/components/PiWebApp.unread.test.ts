@@ -337,6 +337,28 @@ describe("PiWebApp session unread wiring", () => {
     expect([...unreadPresence(app).projects]).toEqual(["project-1"]);
     expect([...unreadPresence(app).workspaces]).toEqual(["ws-1"]);
   });
+
+  it("binds the derived unread presence into the navigation panel", () => {
+    stubJsonFetch({ catalogId: "catalog-a", catalogRevision: 2, sessions: [] });
+    const app = createApp();
+    enableUnread(app);
+    const selected = session("selected");
+    setAppState(app, {
+      ...initialAppState(),
+      machines: [machine("local")],
+      selectedMachine: machine("local"),
+      sessions: [selected],
+      selectedSession: selected,
+      mainView: "chat",
+    });
+
+    handleRealtimeEvent(app, unreadEvent(1, unreadSummary(selected, 1)));
+
+    const bound = navigationPanelValue(app, ".unreadPresence=");
+    if (!isUnreadPresence(bound)) throw new Error("Expected unread presence in navigation");
+    expect(bound).toBe(unreadPresence(app));
+    expect([...bound.machines]).toEqual(["local"]);
+  });
 });
 
 type RenderNavigationPanel = (this: PiWebApp) => TemplateResult;

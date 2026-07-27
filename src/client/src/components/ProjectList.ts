@@ -3,7 +3,7 @@ import { customElement, property, state } from "lit/decorators.js";
 import type { Project, Workspace, WorkspaceActivity } from "../api";
 import { projectActivityIndicator } from "../workspaceActivity";
 import { actionMenuPanelStyle } from "./actionMenu";
-import { renderActionActivityIndicator } from "./activityBadge";
+import { renderActionActivityIndicator, renderActivityIndicator } from "./activityBadge";
 import type { KeyboardNavigableSection } from "./navigationFocus";
 import { activateSelectableRow, focusSelectedOrFirstSelectableRow, handleSelectableRowKeyboard } from "./selectableRow";
 import { listStyles } from "./shared";
@@ -14,6 +14,7 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
   @property({ attribute: false }) selected?: Project;
   @property({ attribute: false }) activities: Record<string, WorkspaceActivity> = {};
   @property({ attribute: false }) workspacesByProjectId: Record<string, Workspace[]> = {};
+  @property({ attribute: false }) unreadProjectIds: ReadonlySet<string> = new Set();
   @property({ type: Boolean, reflect: true }) collapsible = false;
   @property({ type: Boolean, reflect: true }) collapsed = false;
   @property({ attribute: false }) onSelect?: (project: Project) => void;
@@ -64,7 +65,7 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
                 @keydown=${(event: KeyboardEvent) => { this.handleProjectKeydown(event, project); }}
               >
                 <div class="action-main">
-                  <span class="workspace-primary"><span class="workspace-primary-label">${project.name}</span></span><small>${project.path}</small>
+                  <span class="workspace-primary"><span class="workspace-primary-label">${project.name}</span>${this.renderUnread(project)}</span><small>${project.path}</small>
                   ${this.renderActivity(project)}
                 </div>
                 <div class="action-menu">
@@ -102,6 +103,11 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
   private renderActivity(project: Project) {
     const kind = projectActivityIndicator(project, this.workspacesByProjectId[project.id] ?? [], this.activities);
     return renderActionActivityIndicator(kind, kind === "terminal" ? "Project terminal active" : "Project active");
+  }
+
+  private renderUnread(project: Project) {
+    if (!this.unreadProjectIds.has(project.id)) return undefined;
+    return renderActivityIndicator("unread", "Unread sessions in this project");
   }
 
   private toggleMenu(projectId: string, target: EventTarget | null) {

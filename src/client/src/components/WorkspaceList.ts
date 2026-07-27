@@ -4,7 +4,7 @@ import type { Workspace, WorkspaceActivity } from "../api";
 import type { WorkspaceLabelItem } from "../plugins/types";
 import { workspaceActivityFor, workspaceActivityIndicator } from "../workspaceActivity";
 import { actionMenuPanelStyle } from "./actionMenu";
-import { renderActionActivityIndicator } from "./activityBadge";
+import { renderActionActivityIndicator, renderActivityIndicator } from "./activityBadge";
 import type { KeyboardNavigableSection } from "./navigationFocus";
 import { activateSelectableRow, focusSelectedOrFirstSelectableRow, handleSelectableRowKeyboard } from "./selectableRow";
 import { listStyles } from "./shared";
@@ -19,6 +19,7 @@ export class WorkspaceList extends LitElement implements KeyboardNavigableSectio
   @property({ attribute: false }) workspaceLabelItems: (workspace: Workspace) => WorkspaceLabelItem[] = () => [];
   @property({ attribute: false }) activities: Record<string, WorkspaceActivity> = {};
   @property({ attribute: false }) deletingWorkspaceIds: string[] = [];
+  @property({ attribute: false }) unreadWorkspaceIds: ReadonlySet<string> = new Set();
   @property({ attribute: false }) onSelect?: (workspace: Workspace) => void;
   @property({ attribute: false }) onDelete?: (workspace: Workspace) => void;
   @property({ attribute: false }) onToggleCollapsed?: () => void;
@@ -100,6 +101,7 @@ export class WorkspaceList extends LitElement implements KeyboardNavigableSectio
     return html`
       <span class="workspace-primary">
         <span class="workspace-primary-label">${label}</span>
+        ${this.renderUnread(workspace)}
         ${this.isDeleting(workspace) ? html`<span class="workspace-status">Deleting…</span>` : null}
       </span>
       ${items.length === 0 ? null : html`
@@ -109,6 +111,11 @@ export class WorkspaceList extends LitElement implements KeyboardNavigableSectio
       `}
       ${this.renderActivity(workspace)}
     `;
+  }
+
+  private renderUnread(workspace: Workspace): TemplateResult | undefined {
+    if (!this.unreadWorkspaceIds.has(workspace.id)) return undefined;
+    return renderActivityIndicator("unread", "Unread sessions in this workspace");
   }
 
   private renderWorkspaceMenu(label: string, items: WorkspaceLabelItem[], workspace: Workspace): TemplateResult {
