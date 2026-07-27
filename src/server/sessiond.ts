@@ -78,6 +78,7 @@ await runSessionDaemonStartup({
       logger: app.log,
       ...(spawnTargets === undefined ? {} : { spawnTargets }),
       subsessionsEnabled: config.subsessions,
+      askUserEnabled: config.askUser,
       notificationStore,
       unreadStore,
       catalogRefreshStatus: catalogRefresher,

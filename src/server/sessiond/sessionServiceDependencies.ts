@@ -21,6 +21,8 @@ export interface SessionServiceDependencyInput {
   spawnTargets?: NonNullable<PiSessionServiceDependencies["spawnTargets"]>;
   /** The operator's subsessions preference, which also requires spawning. */
   subsessionsEnabled: boolean;
+  /** Whether agents may post structured question sets to the browser. */
+  askUserEnabled: boolean;
 }
 
 /**
@@ -43,6 +45,7 @@ export function sessionServiceDependencies(input: SessionServiceDependencyInput)
     // Tracked subsessions share the spawn capability's project-scope resolver,
     // so they stay off unless spawning is configured too.
     subsessionsEnabled: input.spawnTargets !== undefined && input.subsessionsEnabled,
+    askUserEnabled: input.askUserEnabled,
     notificationStore: input.notificationStore,
     unreadStore: input.unreadStore,
     // Read-only, so session startup can tell a waiting user that provider

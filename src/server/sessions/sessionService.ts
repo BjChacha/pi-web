@@ -1,4 +1,6 @@
 import type {
+  AskUserCloseResponse,
+  AskUserSubmission,
   SavedPromptAttachment,
   SessionBulkArchiveResponse,
   SessionBulkDeleteArchivedResponse,
@@ -56,6 +58,8 @@ export interface SessionRouteService {
   dismissNotification(ref: SessionRouteRef, request: Omit<SessionNotificationDismissRequest, "cwd">): SessionNotificationInboxSnapshot | Promise<SessionNotificationInboxSnapshot>;
   dismissAllNotifications(ref: SessionRouteRef, request: Omit<SessionNotificationDismissAllRequest, "cwd">): SessionNotificationInboxSnapshot | Promise<SessionNotificationInboxSnapshot>;
   clearQueue(ref: SessionRouteLookup): Promise<ClientSessionStatus>;
+  submitAsk(ref: SessionRouteLookup, askId: string, submission: AskUserSubmission): Promise<AskUserCloseResponse>;
+  cancelAsk(ref: SessionRouteLookup, askId: string): Promise<AskUserCloseResponse>;
   dismissWarning(ref: SessionRouteLookup, dismissId: string): Promise<ClientSessionStatus>;
   availableModels(ref: SessionRouteLookup): Promise<ClientSessionModel[]>;
   setModel(ref: SessionRouteLookup, provider: string, modelId: string): Promise<ClientSessionStatus>;

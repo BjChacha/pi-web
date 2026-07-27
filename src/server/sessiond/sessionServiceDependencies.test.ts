@@ -24,6 +24,7 @@ function daemonCollaborators(patch: Partial<SessionServiceDependencyInput> = {})
     unreadStore: new SessionUnreadStore(),
     catalogRefreshStatus: { isRefreshInFlight: () => false },
     subsessionsEnabled: false,
+    askUserEnabled: true,
     ...patch,
   };
 }
@@ -86,5 +87,10 @@ describe("sessiond session service dependency assembly", () => {
     expect(withoutSpawnTargets.subsessionsEnabled).toBe(false);
     expect(withSpawnTargets.spawnTargets).toBe(spawnTargets);
     expect(withSpawnTargets.subsessionsEnabled).toBe(true);
+  });
+
+  it("passes the ask-user preference through to the session service", () => {
+    expect(sessionServiceDependencies(daemonCollaborators({ askUserEnabled: true })).askUserEnabled).toBe(true);
+    expect(sessionServiceDependencies(daemonCollaborators({ askUserEnabled: false })).askUserEnabled).toBe(false);
   });
 });
