@@ -301,6 +301,11 @@ export class PiWebApp extends LitElement {
     void this.sessionUnread.acknowledge(machineId, session);
   }
 
+  private markSessionsRead(sessions: readonly SessionInfo[]): void {
+    const machineId = selectedMachineId(this.state);
+    for (const session of sessions) void this.sessionUnread.acknowledge(machineId, session);
+  }
+
   private async commitReadyChatAfterRender(machineId: string, session: SessionInfo): Promise<void> {
     const identity = unreadChatIdentity(machineId, session);
     await this.updateComplete;
@@ -1348,6 +1353,8 @@ export class PiWebApp extends LitElement {
         .onArchivedCollapsed=${() => { this.sessions.clearSelectionAfterArchivedCollapse(); }}
         .onStartSession=${() => this.startSessionFromNavigation()}
         .onSelectSession=${(session: SessionInfo) => this.selectNavigationItem("sessions", "chat", () => this.sessions.selectSession(session))}
+        .onMarkSessionRead=${(session: SessionInfo) => { this.markSessionsRead([session]); }}
+        .onMarkSessionsRead=${(sessions: SessionInfo[]) => { this.markSessionsRead(sessions); }}
         .onArchiveSession=${(session: SessionInfo) => this.sessions.archiveSession(session)}
         .onArchiveSessionWithDescendants=${(session: SessionInfo) => this.sessions.archiveSessionWithDescendants(session)}
         .onArchiveSessions=${(sessions: SessionInfo[]) => this.sessions.archiveSessions(sessions)}

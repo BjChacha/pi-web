@@ -57,6 +57,8 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
   @property({ attribute: false }) onDeleteArchived?: (session: SessionInfo) => void | Promise<void>;
   @property({ attribute: false }) onDeleteArchivedMany?: (sessions: SessionInfo[]) => void | Promise<void>;
   @property({ attribute: false }) onDetachParent?: (session: SessionInfo) => void;
+  @property({ attribute: false }) onMarkRead?: (session: SessionInfo) => void;
+  @property({ attribute: false }) onMarkReadMany?: (sessions: SessionInfo[]) => void | Promise<void>;
   @property({ attribute: false }) onReload?: (session: SessionInfo) => void;
   @property({ attribute: false }) onCleanup?: () => void;
 
@@ -209,6 +211,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
 
     const selectedSessions = this.selectedSessions("current");
     const archivableSessions = selectedSessions.filter((session) => isArchivableSessionInfo(session, this.statuses[session.id], this.sessionPersistenceOptions()));
+    const unreadSelectedSessions = selectedSessions.filter((session) => this.unreadSessionIds.has(session.id));
     const allVisibleSelected = visibleSessions.length > 0 && visibleSessions.every((session) => this.selectedSessionIds.has(session.id));
     const visibleSelectedCount = visibleSessions.filter((session) => this.selectedSessionIds.has(session.id)).length;
     return html`
@@ -216,6 +219,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
         <button ?disabled=${visibleSessions.length === 0} @click=${() => { this.toggleVisibleSelection(visibleSessions, !allVisibleSelected); }}>${allVisibleSelected ? "Clear visible" : "Select visible"}</button>
         <small>${selectedSessions.length} selected${visibleSelectedCount !== selectedSessions.length ? html` · ${visibleSelectedCount} visible` : null}</small>
         <button ?disabled=${archivableSessions.length === 0} @click=${() => { this.archiveSelectedCurrent(); }}>Archive selected</button>
+        <button ?disabled=${unreadSelectedSessions.length === 0} @click=${() => { this.markSelectedCurrentRead(); }}>Mark read</button>
         <button @click=${() => { this.clearSelection("current"); }}>Clear</button>
         <button @click=${() => { this.closeSelection("current"); }}>Done</button>
       </div>
@@ -280,6 +284,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
                 : canDeleteTransient
                   ? html`<button title="Delete transient new session" @click=${() => { this.openMenuSessionId = undefined; this.onDelete?.(session); }}>Delete</button>`
                   : html`
+                    ${this.unreadSessionIds.has(session.id) ? html`<button title="Mark session as read" @click=${() => { this.openMenuSessionId = undefined; this.onMarkRead?.(session); }}>Mark as read</button>` : null}
                     ${canArchive ? html`
                       <button title="Archive session" @click=${() => { this.openMenuSessionId = undefined; this.onArchive?.(session); }}>Archive</button>
                       ${descendantCount > 0 ? html`<button title="Archive this session and its descendants" @click=${() => { this.openMenuSessionId = undefined; this.confirmArchiveWithDescendants(session, descendantCount); }}>Archive with descendants (${descendantCount})</button>` : null}
@@ -329,6 +334,12 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     if (!confirm(`Permanently delete ${String(archived.length)} selected ${noun}? This cannot be undone.`)) return;
     this.selectedSessionIds = removeSessionIds(this.selectedSessionIds, archived.map((session) => session.id));
     void this.onDeleteArchivedMany?.(archived);
+  }
+
+  private markSelectedCurrentRead(): void {
+    const unreadSelected = this.selectedSessions("current").filter((session) => this.unreadSessionIds.has(session.id));
+    if (unreadSelected.length === 0) return;
+    void this.onMarkReadMany?.(unreadSelected);
   }
 
   private archiveSelectedCurrent(): void {
