@@ -27,6 +27,7 @@ import { sessionCleanupRequestKey, sessionCleanupUnavailableMessage } from "../s
 import { selectedNotificationView } from "../sessionNotifications";
 import { hasAuthoritativeSessionPersistence as runtimeHasAuthoritativeSessionPersistence } from "../sessionPersistence";
 import { SessionUnreadController } from "../sessionUnread";
+import { deriveUnreadPresence, EMPTY_UNREAD_PRESENCE, sameUnreadPresence, type UnreadPresence } from "../unreadPresence";
 import { initialSessionWarningVisibilityState, reconcileSessionWarningVisibility, toggleSessionWarnings } from "../sessionWarningVisibility";
 import { RealtimeSocket, type BrowserRealtimeEvent } from "../sessionSocket";
 import type { PiWebPluginRegistration, PluginMachine, PluginPromptEditor, QualifiedContributionId, QualifiedThemeContribution, QualifiedThemePairContribution, QualifiedWorkspacePanelContribution, PluginRuntimeContext, TerminalCommandRunsInternalRuntime, WorkspaceFiles, WorkspaceHost, WorkspaceLabelContext, WorkspaceLabelItem, WorkspacePanelContext } from "../plugins/types";
@@ -109,6 +110,7 @@ export class PiWebApp extends LitElement {
 
   private readonly sessionUnread = new SessionUnreadController({
     onChange: (machineId) => {
+      this.syncUnreadPresence();
       if (selectedMachineId(this.state) !== machineId) return;
       this.syncUnreadSessionIds();
       this.syncSelectedSessionReadState();
@@ -118,6 +120,7 @@ export class PiWebApp extends LitElement {
     },
   });
   @state() private unreadSessionIds: ReadonlySet<string> = this.sessionUnread.unreadSessionIds(selectedMachineId(this.state), this.state.sessions);
+  @state() private unreadPresence: UnreadPresence = EMPTY_UNREAD_PRESENCE;
   private unreadConnected = false;
   private committedChatIdentity: string | undefined;
   private readyChatIdentity: string | undefined;
@@ -319,6 +322,18 @@ export class PiWebApp extends LitElement {
     if (!sameStringSet(next, this.unreadSessionIds)) this.unreadSessionIds = next;
   }
 
+  private syncUnreadPresence(): void {
+    const next = deriveUnreadPresence({
+      machineIds: this.state.machines.map((machine) => machine.id),
+      projectionFor: (machineId) => this.sessionUnread.projection(machineId),
+      selectedMachineId: selectedMachineId(this.state),
+      projects: this.state.projects,
+      workspaces: this.state.workspaces,
+      workspacesByProjectId: this.state.workspacesByProjectId,
+    });
+    if (!sameUnreadPresence(next, this.unreadPresence)) this.unreadPresence = next;
+  }
+
   private isSessionSeen(machineId: string, session: SessionInfo): boolean {
     if (!this.unreadConnected) return false;
     const identity = unreadChatIdentity(machineId, session);
@@ -404,6 +419,7 @@ export class PiWebApp extends LitElement {
     }
     if (machineUnreadInputsChanged(previous, this.state)) this.syncSessionUnreadMachines();
     this.syncUnreadSessionIds();
+    this.syncUnreadPresence();
     this.handleActivityTransition(previous, this.state);
     this.handleWorkspaceChange(previous, this.state);
     this.handleMachineChange(previous, this.state);
