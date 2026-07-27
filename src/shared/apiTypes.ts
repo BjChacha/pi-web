@@ -591,6 +591,77 @@ export interface AskUserCloseResponse {
   sessionStatus: SessionStatus;
 }
 
+/** Length bound for extension-dialog ids. */
+export const EXTENSION_DIALOG_ID_MAX_LENGTH = 128;
+/** Length bound for extension-authored dialog prose: titles, messages, options, placeholders. */
+export const EXTENSION_DIALOG_TEXT_MAX_LENGTH = 1_000;
+/** Largest option list one `select` dialog may offer. */
+export const EXTENSION_DIALOG_OPTION_LIMIT = 24;
+/** Length bound for the text a user types into an `input` dialog. */
+export const EXTENSION_DIALOG_INPUT_MAX_LENGTH = 4_000;
+
+/** Which extension UI dialog primitive a pending dialog belongs to. */
+export type ExtensionDialogKind = "confirm" | "select" | "input";
+
+/**
+ * The value a user gave in an extension dialog: a boolean for `confirm`, the
+ * chosen option for `select`, the typed text for `input`. Absent when the
+ * dialog closed without an answer.
+ */
+export type ExtensionDialogAnswer = boolean | string;
+
+/**
+ * Why a dialog stopped being open. `"answered"` carries an
+ * {@link ExtensionDialogAnswer}; every other reason is a close without one.
+ */
+export type ExtensionDialogCloseReason = "answered" | "cancelled" | "timeout" | "aborted" | "session-ended";
+
+/**
+ * One open extension dialog of a session, opened by `ctx.ui.confirm()`,
+ * `ctx.ui.select()`, or `ctx.ui.input()`. Daemon-owned and reported in
+ * {@link SessionStatus.pendingDialogs}, so a reconnecting or reloading browser
+ * rehydrates it without depending on having seen the `dialog.opened` event.
+ *
+ * Unlike asks, several dialogs may be open per session at once: each dialog is
+ * an independent blocking wait inside extension code, so opening never
+ * supersedes an existing one.
+ */
+export interface PendingExtensionDialog {
+  dialogId: string;
+  kind: ExtensionDialogKind;
+  title: string;
+  /** Supporting line of a `confirm` dialog. */
+  message?: string;
+  /** Offered choices of a `select` dialog. */
+  options?: string[];
+  /** Placeholder text of an `input` dialog. */
+  placeholder?: string;
+  askedAt: string;
+  /**
+   * When the dialog auto-cancels, as ISO: the sooner of the extension's own
+   * `timeout` and the daemon's `extensionDialogsTimeoutMs` default. Absent
+   * when the dialog waits forever.
+   */
+  timeoutAt?: string;
+  /** Opened while a run was in flight, so `agent_end` settles it as `"aborted"`. */
+  runScoped: boolean;
+}
+
+/**
+ * The complete result of a closed extension dialog. Unlike an ask outcome it
+ * stays small — the dialog itself is not embedded, because a closed dialog
+ * renders only transiently for browsers that saw it open; reloads rehydrate
+ * open dialogs from {@link SessionStatus.pendingDialogs} alone.
+ */
+export interface ExtensionDialogOutcome {
+  dialogId: string;
+  reason: ExtensionDialogCloseReason;
+  /** Present only when `reason` is `"answered"`. */
+  answer?: ExtensionDialogAnswer;
+  askedAt: string;
+  closedAt: string;
+}
+
 /**
  * Progress of the session startup window, where the daemon is still
  * constructing the agent session and no `PiAgentSession` exists yet, so
@@ -773,6 +844,12 @@ export interface SessionStatus {
    * user. Daemon-owned, so it survives browser reload and web/API restarts.
    */
   pendingAsk?: PendingAskUser;
+  /**
+   * The session's open extension dialogs, oldest first, when any are waiting
+   * for the user. Daemon-owned, so they survive browser reload and web/API
+   * restarts. Several may be open at once; the UI presents them as a queue.
+   */
+  pendingDialogs?: PendingExtensionDialog[];
 }
 
 export interface WorkspaceActivity {
@@ -1155,6 +1232,8 @@ type SessionUiEventBody =
   | { type: "session.error"; message: string }
   | { type: "ask.opened"; ask: PendingAskUser }
   | { type: "ask.closed"; askId: string; reason: AskUserCloseReason }
+  | { type: "dialog.opened"; dialog: PendingExtensionDialog }
+  | { type: "dialog.closed"; dialogId: string; reason: ExtensionDialogCloseReason; answer?: ExtensionDialogAnswer }
   | { type: "session.name"; sessionId: string; name?: string }
   | { type: "session.created"; session: SessionInfo }
   | { type: "pi.event"; eventType: string };
