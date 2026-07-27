@@ -70,20 +70,16 @@ export class AskUserCard extends LitElement {
     return html`
       <article class="card open-card" aria-labelledby="ask-user-heading">
         <header class="card-header">
-          <div>
-            <p class="eyebrow">Pi needs your input</p>
-            <h2 id="ask-user-heading">Questions from the model</h2>
-          </div>
-          <span class="question-total">${ask.questions.length} ${ask.questions.length === 1 ? "question" : "questions"}</span>
+          <h2 id="ask-user-heading">Questions</h2>
+          <span class="header-status" role="status" aria-live="polite" aria-atomic="true">
+            ${count} of ${ask.questions.length} answered
+          </span>
         </header>
         <form class="ask-form" @submit=${(event: SubmitEvent) => { this.handleSubmit(event, ask); }}>
-          <div class="questions-grid">
+          <div class="questions">
             ${ask.questions.map((question, index) => this.renderQuestion(ask, question, index))}
           </div>
           <footer class="form-footer">
-            <div class="progress" role="status" aria-live="polite" aria-atomic="true">
-              Answered ${count} of ${ask.questions.length}
-            </div>
             ${this.confirmingPartialSubmit && unanswered.length > 0
               ? this.renderPartialSubmitConfirmation(ask, unanswered)
               : html`
@@ -101,7 +97,8 @@ export class AskUserCard extends LitElement {
     const answer = this.answers[question.id];
     const answered = answeredCount([question], this.answers) === 1;
     const detailId = question.detail === undefined ? undefined : this.questionDetailId(index);
-    const otherSelected = this.isOtherSelected(question, answer);
+    const freeTextOnly = question.options.length === 0;
+    const customSelected = freeTextOnly || this.isOtherSelected(question, answer);
     const inputType = question.multiple === true ? "checkbox" : "radio";
     return html`
       <fieldset
@@ -113,7 +110,6 @@ export class AskUserCard extends LitElement {
         <legend>
           <span class="question-number">${String(index + 1)}.</span>
           <span>${question.question}</span>
-          <span class=${`answer-marker${answered ? " complete" : ""}`} aria-hidden="true">${answered ? "Answered" : "Unanswered"}</span>
         </legend>
         ${question.detail === undefined ? null : html`<p class="question-detail" id=${detailId}>${question.detail}</p>`}
         <div class="options">
@@ -132,29 +128,29 @@ export class AskUserCard extends LitElement {
               </span>
             </label>
           `)}
-          ${question.allowOther === true ? html`
+          ${freeTextOnly ? null : html`
             <label class="option other-option">
               <input
                 type=${inputType}
                 name=${this.questionGroupName(ask, question)}
                 value="__pi_web_other__"
-                .checked=${otherSelected}
+                .checked=${customSelected}
                 @change=${(event: Event) => { this.changeOther(question, index, event); }}
               />
-              <span class="option-copy"><span class="option-label">Other</span></span>
+              <span class="option-copy"><span class="option-label">Custom</span></span>
             </label>
-            ${otherSelected ? html`
-              <label class="other-answer" for=${this.otherInputId(index)}>
-                <span>Your answer for “${question.question}”</span>
-                <textarea
-                  id=${this.otherInputId(index)}
-                  rows="3"
-                  maxlength=${String(ASK_USER_OTHER_TEXT_MAX_LENGTH)}
-                  .value=${answer?.otherText ?? ""}
-                  @input=${(event: Event) => { this.changeOtherText(question, event); }}
-                ></textarea>
-              </label>
-            ` : null}
+          `}
+          ${customSelected ? html`
+            <label class="other-answer" for=${this.otherInputId(index)}>
+              <span>Custom answer</span>
+              <textarea
+                id=${this.otherInputId(index)}
+                rows="3"
+                maxlength=${String(ASK_USER_OTHER_TEXT_MAX_LENGTH)}
+                .value=${answer?.otherText ?? ""}
+                @input=${(event: Event) => { this.changeOtherText(question, event); }}
+              ></textarea>
+            </label>
           ` : null}
         </div>
       </fieldset>
@@ -186,16 +182,13 @@ export class AskUserCard extends LitElement {
     const recordLabel = outcome.reason === "submitted"
       ? "Answers sent"
       : outcome.reason === "superseded"
-        ? "Questions superseded"
-        : "Questions cancelled";
+        ? "Superseded"
+        : "Cancelled";
     return html`
       <article class="card record-card" aria-labelledby="ask-user-record-heading">
         <header class="card-header">
-          <div>
-            <p class="eyebrow">Question record</p>
-            <h2 id="ask-user-record-heading">${recordLabel}</h2>
-          </div>
-          <span class=${`record-reason ${outcome.reason}`}>${outcome.reason}</span>
+          <h2 id="ask-user-record-heading">Questions</h2>
+          <span class=${`header-status ${outcome.reason}`}>${recordLabel}</span>
         </header>
         <p class="record-summary">
           ${outcome.reason === "superseded"
@@ -223,7 +216,7 @@ export class AskUserCard extends LitElement {
           : html`
               <ul class="record-answers">
                 ${answer.values.map((value) => html`<li>${this.optionLabel(record.question, value)}</li>`)}
-                ${answer.otherText === undefined ? null : html`<li><strong>Other:</strong> <span class="other-record-text">${answer.otherText}</span></li>`}
+                ${answer.otherText === undefined ? null : html`<li><strong>Custom:</strong> <span class="other-record-text">${answer.otherText}</span></li>`}
               </ul>
               ${answer.fromDraft ? html`<p class="draft-note">Draft answer · not sent</p>` : null}
             `}
@@ -339,7 +332,7 @@ export class AskUserCard extends LitElement {
   }
 
   private isOtherSelected(question: AskUserQuestion, answer: AskDraftAnswer | undefined): boolean {
-    if (question.allowOther !== true || answer?.otherText === undefined) return false;
+    if (answer?.otherText === undefined) return false;
     return question.multiple === true || answer.values.length === 0;
   }
 
@@ -400,93 +393,69 @@ export class AskUserCard extends LitElement {
   static override styles = css`
     :host {
       display: block;
-      width: min(100%, 780px);
-      margin: 18px auto;
+      box-sizing: border-box;
+      width: 100%;
+      margin: 0 0 14px;
       color: var(--pi-text);
       font: 14px system-ui, sans-serif;
       container-type: inline-size;
     }
     .card {
-      overflow: hidden;
       border: 1px solid var(--pi-border);
-      border-radius: 12px;
+      border-radius: 10px;
       background: var(--pi-surface);
-      box-shadow: 0 10px 30px var(--pi-shadow-soft);
     }
     .card-header {
+      position: sticky;
+      top: var(--pi-chat-sticky-top, 0px);
+      z-index: 6;
       display: flex;
-      align-items: flex-start;
+      align-items: center;
       justify-content: space-between;
       gap: 12px;
-      padding: 14px 16px;
-      border-bottom: 1px solid var(--pi-border-muted);
-      background: var(--pi-bg-overlay);
-    }
-    .eyebrow {
-      margin: 0 0 3px;
-      color: var(--pi-accent);
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: .08em;
-      text-transform: uppercase;
+      min-height: 22px;
+      padding: 7px 10px 6px;
+      border-bottom: 1px solid color-mix(in srgb, var(--pi-border-muted) 35%, transparent);
+      border-radius: 9px 9px 0 0;
+      background: var(--pi-surface);
+      box-shadow: 0 8px 18px var(--pi-shadow-soft);
     }
     h2, h3, p { margin-top: 0; }
-    h2 { margin-bottom: 0; font-size: 16px; line-height: 1.3; }
-    .question-total, .record-reason {
-      flex: 0 0 auto;
-      border: 1px solid var(--pi-border-muted);
-      border-radius: 999px;
-      color: var(--pi-muted);
-      padding: 3px 8px;
-      font-size: 11px;
+    h2 {
+      margin-bottom: 0;
+      color: var(--pi-accent);
+      font-size: 12px;
+      line-height: 1.3;
+      text-transform: uppercase;
     }
-    .record-reason { text-transform: capitalize; }
-    .record-reason.submitted { border-color: var(--pi-success-border); color: var(--pi-success); }
-    .record-reason.superseded { border-color: var(--pi-warning-border); color: var(--pi-warning); }
-    .ask-form {
-      max-height: min(72dvh, 680px);
-      overflow: auto;
-      overscroll-behavior: contain;
-    }
-    .questions-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      align-items: start;
-      gap: 12px;
-      padding: 14px;
-    }
+    .header-status { flex: 0 1 auto; color: var(--pi-muted); font-size: 11px; text-align: end; }
+    .header-status.submitted { color: var(--pi-success); }
+    .header-status.superseded { color: var(--pi-warning); }
+    .questions { display: grid; padding-top: 8px; }
     fieldset.question {
       min-width: 0;
       margin: 0;
-      border: 1px solid var(--pi-border-muted);
-      border-radius: 10px;
-      padding: 12px;
-      background: var(--pi-bg);
+      border: 0;
+      border-top: 1px solid var(--pi-border-muted);
+      padding: 16px;
+      background: transparent;
     }
-    fieldset.question.answered { border-color: var(--pi-success-border); }
-    fieldset.question:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: 2px; }
+    fieldset.question:first-child { border-top: 0; }
+    fieldset.question:focus-visible { outline: 2px solid var(--pi-accent); outline-offset: -3px; }
     legend {
       box-sizing: border-box;
       width: 100%;
       display: grid;
-      grid-template-columns: auto minmax(0, 1fr) auto;
+      grid-template-columns: auto minmax(0, 1fr);
       align-items: start;
       gap: 5px;
       color: var(--pi-text);
-      padding: 0 2px;
+      padding: 0;
       font-weight: 650;
       line-height: 1.35;
     }
     .question-number { color: var(--pi-muted); }
-    .answer-marker {
-      border-radius: 999px;
-      background: var(--pi-surface-hover);
-      color: var(--pi-muted);
-      padding: 2px 6px;
-      font-size: 10px;
-      font-weight: 600;
-    }
-    .answer-marker.complete { background: var(--pi-success-surface); color: var(--pi-success); }
+    fieldset.question.answered .question-number { color: var(--pi-success); }
     .question-detail {
       margin: 4px 0 10px;
       color: var(--pi-muted);
@@ -511,7 +480,8 @@ export class AskUserCard extends LitElement {
     .option-copy { min-width: 0; display: grid; gap: 2px; }
     .option-label { line-height: 1.35; }
     .option-detail { color: var(--pi-muted); font-size: 12px; line-height: 1.35; }
-    .other-answer { display: grid; gap: 5px; color: var(--pi-muted); font-size: 12px; padding: 0 8px 4px 32px; }
+    .other-answer { display: grid; gap: 5px; color: var(--pi-muted); font-size: 12px; padding: 4px 8px 4px 32px; }
+    .other-answer:only-child { padding-left: 0; padding-right: 0; }
     textarea {
       box-sizing: border-box;
       width: 100%;
@@ -526,20 +496,13 @@ export class AskUserCard extends LitElement {
       line-height: 1.4;
     }
     .form-footer {
-      position: sticky;
-      z-index: 2;
-      bottom: 0;
       display: flex;
       align-items: center;
-      justify-content: space-between;
+      justify-content: flex-end;
       gap: 12px;
-      border-top: 1px solid var(--pi-border);
-      background: var(--pi-bg-overlay);
-      padding: 10px 14px;
-      box-shadow: 0 -8px 18px var(--pi-shadow-soft);
-      backdrop-filter: blur(8px);
+      border-top: 1px solid var(--pi-border-muted);
+      padding: 12px 16px;
     }
-    .progress { flex: 0 0 auto; color: var(--pi-muted); font-size: 12px; font-weight: 650; }
     button {
       border: 1px solid var(--pi-border);
       border-radius: 8px;
@@ -566,24 +529,22 @@ export class AskUserCard extends LitElement {
       text-underline-offset: 2px;
     }
     .confirmation-actions { flex: 0 0 auto; display: flex; gap: 7px; }
-    .record-summary { margin: 0; border-bottom: 1px solid var(--pi-border-muted); color: var(--pi-muted); padding: 10px 16px; font-size: 12px; }
-    .record-questions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 14px; }
-    .record-question { min-width: 0; border: 1px solid var(--pi-border-muted); border-radius: 10px; background: var(--pi-bg); padding: 12px; }
+    .record-summary { margin: 0; color: var(--pi-muted); padding: 12px 16px; font-size: 12px; }
+    .record-questions { display: grid; }
+    .record-question { min-width: 0; padding: 14px 16px; }
+    .record-question + .record-question { border-top: 1px solid var(--pi-border-muted); }
     .record-question h3 { display: flex; gap: 5px; margin-bottom: 8px; font-size: 14px; line-height: 1.35; }
     .record-answers { display: grid; gap: 4px; margin: 0; padding-left: 22px; line-height: 1.4; }
     .other-record-text { white-space: pre-wrap; overflow-wrap: anywhere; }
     .unanswered-record { margin: 0; color: var(--pi-muted); font-style: italic; }
     .draft-note { margin: 7px 0 0; color: var(--pi-warning); font-size: 11px; }
     @container (max-width: 580px) {
-      :host { margin: 12px 0; }
-      .questions-grid, .record-questions { grid-template-columns: minmax(0, 1fr); padding: 10px; }
-      .card-header { padding: 12px; }
-      .form-footer { align-items: stretch; flex-direction: column; }
+      fieldset.question, .record-question { padding: 14px 12px; }
+      .record-summary { padding-inline: 12px; }
+      .form-footer { align-items: stretch; flex-direction: column; padding: 12px; }
       .partial-confirmation { align-items: stretch; flex-direction: column; }
       .confirmation-actions { justify-content: flex-end; }
       .primary-action { min-height: 42px; }
-      legend { grid-template-columns: auto minmax(0, 1fr); }
-      .answer-marker { grid-column: 2; justify-self: start; }
     }
   `;
 }

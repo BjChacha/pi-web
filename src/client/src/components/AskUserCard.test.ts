@@ -33,7 +33,7 @@ describe("ask-user-card live form", () => {
     expect(code.name).toBe(vim.name);
     expect(web.type).toBe("checkbox");
     expect(web.name).not.toBe(vim.name);
-    expect(root.querySelector("[aria-live='polite']")?.textContent).toContain("Answered 0 of 2");
+    expect(root.querySelector("[aria-live='polite']")?.textContent).toContain("0 of 2 answered");
 
     // Focus and interaction run through the rendered native control rather than
     // extracting Lit handlers, so this exercises the form's browser boundary.
@@ -44,7 +44,7 @@ describe("ask-user-card live form", () => {
 
     expect(vim.checked).toBe(true);
     expect(code.checked).toBe(false);
-    expect(root.querySelector("[aria-live='polite']")?.textContent).toContain("Answered 1 of 2");
+    expect(root.querySelector("[aria-live='polite']")?.textContent).toContain("1 of 2 answered");
   });
 
   it("accumulates several checkbox values for a multi-select question", async () => {
@@ -58,7 +58,7 @@ describe("ask-user-card live form", () => {
     inputWithValue(root, "desktop").click();
     await card.updateComplete;
 
-    expect(root.querySelector("[aria-live='polite']")?.textContent).toContain("Answered 1 of 1");
+    expect(root.querySelector("[aria-live='polite']")?.textContent).toContain("1 of 1 answered");
     buttonWithText(root, "Send answers").click();
     await Promise.resolve();
 
@@ -67,10 +67,10 @@ describe("ask-user-card live form", () => {
     });
   });
 
-  it("reveals and focuses a labelled other field while preserving multi-select options", async () => {
+  it("always offers and focuses a labelled custom field while preserving multi-select options", async () => {
     const onSubmit = vi.fn<AskUserSubmitCallback>();
     const card = await mountOpenAsk(openAsk([
-      question("stack", "Pick the stack", [option("lit", "Lit"), option("react", "React")], { multiple: true, allowOther: true }),
+      question("stack", "Pick the stack", [option("lit", "Lit"), option("react", "React")], { multiple: true }),
     ]), onSubmit);
     const root = renderRoot(card);
 
@@ -79,9 +79,9 @@ describe("ask-user-card live form", () => {
     await card.updateComplete;
     await Promise.resolve();
 
-    const textarea = requiredElement(root.querySelector("textarea"), "other textarea");
-    const label = requiredElement(textarea.closest("label"), "other label");
-    expect(label.textContent).toContain("Your answer for “Pick the stack”");
+    const textarea = requiredElement(root.querySelector("textarea"), "custom textarea");
+    const label = requiredElement(textarea.closest("label"), "custom label");
+    expect(label.textContent).toContain("Custom answer");
     expect(root.activeElement).toBe(textarea);
 
     textarea.value = "Svelte";
@@ -95,12 +95,33 @@ describe("ask-user-card live form", () => {
     });
   });
 
+  it("shows and submits the custom field directly when no options were supplied", async () => {
+    const onSubmit = vi.fn<AskUserSubmitCallback>();
+    const card = await mountOpenAsk(openAsk([
+      question("notes", "Anything else?", []),
+    ]), onSubmit);
+    const root = renderRoot(card);
+    const textarea = requiredElement(root.querySelector("textarea"), "custom textarea");
+
+    expect(root.querySelector("input")).toBeNull();
+    expect(requiredElement(textarea.closest("label"), "custom label").textContent).toContain("Custom answer");
+    textarea.value = "Keep the first version small.";
+    textarea.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+    await card.updateComplete;
+    buttonWithText(root, "Send answers").click();
+    await Promise.resolve();
+
+    expect(onSubmit).toHaveBeenCalledWith("ask-1", {
+      answers: [{ id: "notes", values: [], otherText: "Keep the first version small." }],
+    });
+  });
+
   it("names unanswered questions before allowing a partial submit", async () => {
     const onSubmit = vi.fn<AskUserSubmitCallback>();
     const card = await mountOpenAsk(openAsk([
       question("editor", "Choose an editor", [option("vim", "Vim")]),
       question("deploy", "Choose a deployment target", [option("cloud", "Cloud")]),
-      question("notes", "Add implementation notes", [], { allowOther: true }),
+      question("notes", "Add implementation notes", []),
     ]), onSubmit);
     const root = renderRoot(card);
 
@@ -139,7 +160,7 @@ describe("ask-user-card record mode", () => {
       closedAt: "2026-07-20T10:05:00.000Z",
       questions: [
         unansweredRecord(question("speed", "Preferred pace", [option("fast", "Fast"), option("careful", "Careful")])),
-        unansweredRecord(question("rationale", "Why?", [], { allowOther: true })),
+        unansweredRecord(question("rationale", "Why?", [])),
         unansweredRecord(question("region", "Deployment region", [option("eu", "Europe")])),
       ],
       answeredCount: 0,
@@ -154,7 +175,7 @@ describe("ask-user-card record mode", () => {
     const root = renderRoot(card);
 
     expect(root.querySelector("input, textarea, button, select")).toBeNull();
-    expect(root.textContent).toContain("Questions superseded");
+    expect(root.textContent).toContain("Superseded");
     expect(root.textContent).toContain("Fast");
     expect(root.textContent).toContain("It keeps the feedback loop short.");
     expect(root.textContent).toContain("Draft answer · not sent");
@@ -200,7 +221,7 @@ function question(
   id: string,
   text: string,
   options: AskUserQuestion["options"],
-  settings: { detail?: string; multiple?: boolean; allowOther?: boolean } = {},
+  settings: { detail?: string; multiple?: boolean } = {},
 ): AskUserQuestion {
   return {
     id,
@@ -208,7 +229,6 @@ function question(
     options,
     ...(settings.detail === undefined ? {} : { detail: settings.detail }),
     ...(settings.multiple === undefined ? {} : { multiple: settings.multiple }),
-    ...(settings.allowOther === undefined ? {} : { allowOther: settings.allowOther }),
   };
 }
 

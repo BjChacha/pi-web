@@ -462,7 +462,7 @@ export const ASK_USER_OPTION_LIMIT = 12;
 export const ASK_USER_ID_MAX_LENGTH = 128;
 /** Length bound for model-authored prose: questions, details, and option labels. */
 export const ASK_USER_TEXT_MAX_LENGTH = 1_000;
-/** Length bound for the free text a user types into an "other" field. */
+/** Length bound for the free text a user types as a custom answer. */
 export const ASK_USER_OTHER_TEXT_MAX_LENGTH = 4_000;
 
 /** One selectable option of an {@link AskUserQuestion}. */
@@ -489,7 +489,10 @@ export interface AskUserQuestion {
   detail?: string;
   /** Offered options; may be empty when only free text makes sense. */
   options: AskUserQuestionOption[];
-  /** When true, a labelled free-text field is offered alongside the options. */
+  /**
+   * Compatibility marker for older clients. Canonical questions set this to
+   * true because every question offers a custom free-text answer.
+   */
   allowOther?: boolean;
   /** When true, several options may be selected at once. */
   multiple?: boolean;
@@ -519,7 +522,7 @@ export interface AskUserAnswer {
   id: string;
   /** Selected {@link AskUserQuestionOption.value} entries; several only when the question allows it. */
   values: string[];
-  /** Free text typed into the "other" field, when the question allows it. */
+  /** Free text typed as the question's custom answer. */
   otherText?: string;
 }
 
@@ -534,7 +537,7 @@ export interface AskUserSubmission {
  */
 export interface AskUserQuestionRecord {
   question: AskUserQuestion;
-  /** True when at least one option was selected or "other" text was given. */
+  /** True when at least one option was selected or custom text was given. */
   answered: boolean;
   values: string[];
   otherText?: string;

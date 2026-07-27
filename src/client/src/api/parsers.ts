@@ -218,17 +218,16 @@ function parseAskUserQuestion(value: unknown): AskUserQuestion {
   const record = requireRecord(value);
   const options = boundedArrayOf(record["options"], parseAskUserQuestionOption, ASK_USER_OPTION_LIMIT, "options");
   assertUniqueStrings(options.map((option) => option.value), "ask option value");
-  const allowOther = parseOptionalBoolean(record["allowOther"], "allowOther");
+  // Validate the legacy wire field when present, but normalize every question to
+  // the current invariant: the browser always offers a custom answer.
+  parseOptionalBoolean(record["allowOther"], "allowOther");
   const multiple = parseOptionalBoolean(record["multiple"], "multiple");
-  // A question offering neither options nor a free-text field cannot be answered
-  // at all, which would make reporting it as unanswered meaningless.
-  if (options.length === 0 && allowOther !== true) throw new Error("Ask question offers no way to answer");
   return {
     id: requireBoundedNonEmptyString(record, "id", ASK_USER_ID_MAX_LENGTH),
     question: requireBoundedNonEmptyString(record, "question", ASK_USER_TEXT_MAX_LENGTH),
     ...optionalField("detail", optionalBoundedNonEmptyString(record, "detail", ASK_USER_TEXT_MAX_LENGTH)),
     options,
-    ...(allowOther === undefined ? {} : { allowOther }),
+    allowOther: true,
     ...(multiple === undefined ? {} : { multiple }),
   };
 }

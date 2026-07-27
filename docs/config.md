@@ -275,7 +275,7 @@ In **Settings → Session daemon**, these keys are saved on the selected machine
 
 `askUser` controls whether agents receive the core `ask_user` tool. It defaults to `true`; set it to `false`, or set `PI_WEB_ASK_USER=false`, to remove the tool. The environment override accepts `0|1|true|false` and takes precedence over the config file.
 
-The tool accepts one set of 1–20 questions. Each question has a unique `id`, its `question` text, optional supporting `detail`, up to 12 options with stable values and user-facing labels, and optional `allowOther` and `multiple` flags. A question must offer at least one option or allow free text. No question is required: the user may leave any of them unanswered.
+The tool accepts one set of 1–20 questions. Each question has a unique `id`, its `question` text, optional supporting `detail`, up to 12 options with stable values and user-facing labels, and an optional `multiple` flag. The browser always adds a **Custom** free-text answer, including when the model supplies no options. No question is required: the user may leave any of them unanswered.
 
 Calling `ask_user` posts the whole set as one browser form and ends the current agent run instead of waiting for the user. The open form is owned by the session daemon, so it survives a browser disconnect, browser reload, or web/API restart while that daemon keeps running. When the user submits, the answers arrive as a follow-up that wakes the session; each question is reported with its selected option values or free text, or explicitly as unanswered.
 

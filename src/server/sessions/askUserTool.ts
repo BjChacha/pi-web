@@ -17,7 +17,7 @@ export interface AskUserInvocation {
 }
 
 export interface AskUserToolDeps {
-  /** Registers the ask as the session's open one; rejects question sets the user could not answer. */
+  /** Registers the ask as the session's open one; rejects malformed question sets. */
   open(input: AskUserInvocation): Promise<PendingAskOpenResult>;
 }
 
@@ -53,10 +53,7 @@ const AskUserQuestionParams = Type.Object({
   })),
   options: Type.Optional(Type.Array(AskUserOptionParams, {
     maxItems: ASK_USER_OPTION_LIMIT,
-    description: "Options to choose from. Omit only when free text is the whole answer, and then set allowOther.",
-  })),
-  allowOther: Type.Optional(Type.Boolean({
-    description: "Offer a free-text field alongside the options.",
+    description: "Options to choose from. Omit when free text is the whole answer; the browser always adds a Custom choice.",
   })),
   multiple: Type.Optional(Type.Boolean({
     description: "Allow several options at once. Default: one answer per question.",
@@ -73,13 +70,15 @@ const AskUserParams = Type.Object({
 
 /** Shapes one schema question into the domain question; the store owns validation. */
 function toQuestion(param: Static<typeof AskUserQuestionParams>): AskUserQuestion {
-  const { detail, options, allowOther, multiple } = param;
+  const { detail, options, multiple } = param;
   return {
     id: param.id,
     question: param.question,
     ...(detail === undefined ? {} : { detail }),
     options: (options ?? []).map(toOption),
-    ...(allowOther === undefined ? {} : { allowOther }),
+    // Keep the compatibility marker on the daemon wire even though the model no
+    // longer chooses whether a question accepts a custom answer.
+    allowOther: true,
     ...(multiple === undefined ? {} : { multiple }),
   };
 }

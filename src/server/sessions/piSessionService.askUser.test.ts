@@ -7,7 +7,7 @@ import { CapturingSessionEventHub, emptyArchiveStore, fakeRuntime, runtimeCreato
 const TEST_AGENT_DIR = "/tmp/pi-web-test-agent";
 const ACTIVE_SESSION_ID = "session-1";
 
-const questions = [{ id: "db", question: "Which database?", options: [{ value: "pg", label: "Postgres" }] }];
+const questions = [{ id: "db", question: "Which database?", options: [{ value: "pg", label: "Postgres" }], allowOther: true }];
 
 /**
  * Service over a clocked store with sequential ask ids, so asks are named
@@ -98,13 +98,14 @@ describe("PiSessionService.openAsk", () => {
     await service.dispose();
   });
 
-  it("rejects an unanswerable question set without opening it", async () => {
+  it("opens an optionless question with a custom answer", async () => {
     const { service, store, events } = askService();
 
-    await expect(service.openAsk({ sessionId: "session-1", questions: [{ id: "empty", question: "No way to answer?", options: [] }] }))
-      .rejects.toThrow(PendingAskValidationError);
-    expect(store.pendingAsk("session-1")).toBeUndefined();
-    expect(askEvents(events)).toEqual([]);
+    const result = await service.openAsk({ sessionId: "session-1", questions: [{ id: "empty", question: "Anything else?", options: [] }] });
+
+    expect(result.ask.questions).toEqual([{ id: "empty", question: "Anything else?", options: [], allowOther: true }]);
+    expect(store.pendingAsk("session-1")).toEqual(result.ask);
+    expect(askEvents(events)).toHaveLength(1);
     await service.dispose();
   });
 
@@ -163,11 +164,16 @@ describe("PiSessionService ask status projection", () => {
 });
 
 describe("PiSessionService.submitAsk", () => {
-  it("delivers the answers as a follow-up custom message that wakes the session", async () => {
+  it("delivers a custom answer as a follow-up message that wakes the session", async () => {
     const { service, store, events, fake } = askService({ withActiveSession: true });
-    await service.openAsk({ sessionId: ACTIVE_SESSION_ID, questions });
+    await service.openAsk({
+      sessionId: ACTIVE_SESSION_ID,
+      questions: [{ id: "db", question: "Which database?", options: [{ value: "pg", label: "Postgres" }], allowOther: false }],
+    });
 
-    const response = await service.submitAsk(sessionRef(ACTIVE_SESSION_ID), "ask-1", { answers: [{ id: "db", values: ["pg"] }] });
+    const response = await service.submitAsk(sessionRef(ACTIVE_SESSION_ID), "ask-1", {
+      answers: [{ id: "db", values: [], otherText: "DuckDB" }],
+    });
 
     expect(response).toMatchObject({ result: "closed", outcome: { askId: "ask-1", reason: "submitted", answeredCount: 1, unansweredIds: [] } });
     expect(response.sessionStatus.sessionId).toBe(ACTIVE_SESSION_ID);
@@ -176,6 +182,7 @@ describe("PiSessionService.submitAsk", () => {
     expect(delivered?.message.customType).toBe(ASK_USER_ANSWERS_CUSTOM_TYPE);
     expect(delivered?.message.display).toBe(true);
     expect(delivered?.message.content).toContain("The user submitted answers to your questions.");
+    expect(delivered?.message.content).toContain(`custom: "DuckDB"`);
     expect(delivered?.message.content).toContain("Answered 1 of 1");
     expect(delivered?.message.details).toMatchObject({ askId: "ask-1", reason: "submitted" });
     expect(delivered?.options).toEqual({ triggerTurn: true, deliverAs: "followUp" });

@@ -221,6 +221,7 @@ export class ChatView extends LitElement {
   private suppressLoadMoreRequests = false;
   private loadMoreCheckFrame: number | undefined;
   private scrollToBottomFrame: number | undefined;
+  private scrollToOpenAskFrame: number | undefined;
   private conversationRailFrame: number | undefined;
   private groupedMessagesInput?: ChatLine[];
   private groupedMessagesStart = 0;
@@ -279,6 +280,10 @@ export class ChatView extends LitElement {
     if (this.restoreScrollFrame !== undefined) cancelAnimationFrame(this.restoreScrollFrame);
     if (this.loadMoreCheckFrame !== undefined) cancelAnimationFrame(this.loadMoreCheckFrame);
     if (this.scrollToBottomFrame !== undefined) cancelAnimationFrame(this.scrollToBottomFrame);
+    if (this.scrollToOpenAskFrame !== undefined) {
+      cancelAnimationFrame(this.scrollToOpenAskFrame);
+      this.scrollToOpenAskFrame = undefined;
+    }
     if (this.conversationRailFrame !== undefined) cancelAnimationFrame(this.conversationRailFrame);
     window.removeEventListener("resize", this.onViewportResize);
     window.removeEventListener("pagehide", this.onPageHide);
@@ -305,6 +310,10 @@ export class ChatView extends LitElement {
       cancelAnimationFrame(this.restoreScrollFrame);
       this.restoreScrollFrame = undefined;
     }
+    if (this.scrollToOpenAskFrame !== undefined) {
+      cancelAnimationFrame(this.scrollToOpenAskFrame);
+      this.scrollToOpenAskFrame = undefined;
+    }
   }
 
   protected override willUpdate(changed: Map<string, unknown>): void {
@@ -328,9 +337,13 @@ export class ChatView extends LitElement {
     if (changed.has("loadingMore") && !this.loadingMore) this.loadMoreRequested = false;
     if (changed.has("hasMore") && !this.hasMore) this.loadMoreRequested = false;
     if (changed.has("sessionId")) this.restoreScrollPosition();
-    if (!changed.has("sessionId") && (changed.has("messages") || changed.has("pendingAsk")) && this.pinnedToBottom) this.scrollToBottom();
+    const openedAsk = changed.has("pendingAsk") && this.isNewPendingAsk(changed.get("pendingAsk"));
+    // The form uses the transcript scroller. Start a new long form at question
+    // one rather than applying the usual live-tail scroll and landing at its end.
+    if (!changed.has("sessionId") && openedAsk && this.pinnedToBottom) this.scrollToOpenAsk();
+    else if (!changed.has("sessionId") && (changed.has("messages") || changed.has("pendingAsk")) && this.pinnedToBottom) this.scrollToBottom();
     if (changed.has("messages") || changed.has("messageStart") || changed.has("messageTotal") || changed.has("hasMore") || changed.has("loadingMore")) this.scheduleConversationRailUpdate();
-    if (changed.has("messages") || changed.has("messageStart") || changed.has("hasMore") || changed.has("loadingMore")) this.continuePendingScrollRestore();
+    if (changed.has("messages") || changed.has("messageStart") || changed.has("hasMore") || changed.has("loadingMore") || changed.has("pendingAsk")) this.continuePendingScrollRestore();
     if (changed.has("messages") || changed.has("hasMore") || changed.has("loadingMore")) this.requestLoadMoreIfNeeded();
     if (changed.has("notificationInbox") && this.pendingNotificationFocus !== undefined) this.focusPendingNotificationTarget();
     if (changed.has("zoomedImage")) this.syncImageZoomDialog();
@@ -647,6 +660,7 @@ export class ChatView extends LitElement {
     if (this.pendingAsk === undefined) return null;
     return html`
       <ask-user-card
+        data-scroll-anchor-id=${`ask:${this.pendingAsk.askId}`}
         .ask=${this.pendingAsk}
         .draftSessionId=${this.askDraftSessionId}
         .onSubmit=${this.onSubmitAsk}
@@ -1011,6 +1025,33 @@ export class ChatView extends LitElement {
     });
   }
 
+  private isNewPendingAsk(previous: unknown): boolean {
+    return this.pendingAsk !== undefined
+      && (typeof previous !== "object" || previous === null || Reflect.get(previous, "askId") !== this.pendingAsk.askId);
+  }
+
+  private scrollToOpenAsk(): void {
+    if (this.scrollToOpenAskFrame !== undefined) return;
+    if (this.scrollToBottomFrame !== undefined) {
+      cancelAnimationFrame(this.scrollToBottomFrame);
+      this.scrollToBottomFrame = undefined;
+    }
+    this.scrollToOpenAskFrame = requestAnimationFrame(() => {
+      this.scrollToOpenAskFrame = undefined;
+      this.withSuppressedScrollSave(() => { this.alignOpenAskToTop(); });
+    });
+  }
+
+  private alignOpenAskToTop(): boolean {
+    const chat = this.chat;
+    const card = this.renderRoot.querySelector<HTMLElement>(".chat > ask-user-card");
+    if (chat === undefined || card === null) return false;
+    chat.scrollTop += card.getBoundingClientRect().top - chat.getBoundingClientRect().top;
+    this.syncScrollMetrics();
+    this.pinnedToBottom = this.isNearBottom();
+    return true;
+  }
+
   restoreScrollPosition() {
     const sessionId = this.sessionId;
     if (this.restoreScrollFrame !== undefined) cancelAnimationFrame(this.restoreScrollFrame);
@@ -1018,6 +1059,7 @@ export class ChatView extends LitElement {
       this.restoreScrollFrame = undefined;
       if (this.sessionId !== sessionId) return;
       this.withSuppressedScrollSave(() => {
+        if (this.pendingAsk !== undefined && this.scrollController.readPosition(sessionId) === undefined && this.alignOpenAskToTop()) return;
         const result = this.scrollController.restorePosition(sessionId, this.chat, this.scrollAnchorElements(), { fallbackToBottom: this.shouldFallbackToBottomForMissingAnchor() });
         this.handleScrollRestoreResult(sessionId, result);
       });

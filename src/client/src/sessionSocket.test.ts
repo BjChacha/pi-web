@@ -118,7 +118,7 @@ describe("notification socket guards", () => {
     const ask = {
       askId: "ask-1",
       askedAt: "2026-07-20T00:00:00.000Z",
-      questions: [{ id: "q1", question: "Which database?", options: [{ value: "pg", label: "Postgres" }] }],
+      questions: [{ id: "q1", question: "Which database?", options: [{ value: "pg", label: "Postgres" }], allowOther: true }],
     };
 
     expect(parseSessionSocketEvent({ type: "ask.opened", ask })).toEqual({ type: "ask.opened", ask });

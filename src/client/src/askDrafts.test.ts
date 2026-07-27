@@ -50,11 +50,10 @@ const singleSelect: AskUserQuestion = {
   options: [{ value: "pg", label: "Postgres" }, { value: "sqlite", label: "SQLite" }],
 };
 
-const multiSelectWithOther: AskUserQuestion = {
+const multiSelect: AskUserQuestion = {
   id: "q2",
   question: "Which extras?",
   options: [{ value: "metrics", label: "Metrics" }, { value: "tracing", label: "Tracing" }],
-  allowOther: true,
   multiple: true,
 };
 
@@ -62,10 +61,9 @@ const freeTextOnly: AskUserQuestion = {
   id: "q3",
   question: "Anything else?",
   options: [],
-  allowOther: true,
 };
 
-const questions = [singleSelect, multiSelectWithOther, freeTextOnly];
+const questions = [singleSelect, multiSelect, freeTextOnly];
 
 afterEach(() => {
   Object.defineProperty(globalThis, "localStorage", { value: undefined, configurable: true });
@@ -151,7 +149,7 @@ describe("ask answer state", () => {
     expect(toSubmission(questions, answers).answers.map((answer) => answer.id)).toEqual(["q1", "q3"]);
   });
 
-  it("keeps several values and other text together for a multi-select question", () => {
+  it("keeps several values and custom text together for a multi-select question", () => {
     const answers: AskDraftAnswers = { q2: { values: ["metrics", "tracing"], otherText: "profiling" } };
 
     expect(toSubmission(questions, answers)).toEqual({
@@ -178,15 +176,13 @@ describe("ask answer state", () => {
     });
   });
 
-  it("keeps other text for a single-select question that has no selected option", () => {
-    const singleWithOther: AskUserQuestion = { ...singleSelect, allowOther: true };
-
-    expect(toSubmission([singleWithOther], { q1: { values: [], otherText: "neither" } })).toEqual({
+  it("keeps custom text for every single-select question when no option is selected", () => {
+    expect(toSubmission([singleSelect], { q1: { values: [], otherText: "neither" } })).toEqual({
       answers: [{ id: "q1", values: [], otherText: "neither" }],
     });
   });
 
-  it("bounds other text at the shared limit", () => {
+  it("bounds custom text at the shared limit", () => {
     const answers: AskDraftAnswers = { q3: { values: [], otherText: "a".repeat(ASK_USER_OTHER_TEXT_MAX_LENGTH + 10) } };
 
     expect(toSubmission(questions, answers).answers[0]?.otherText).toHaveLength(ASK_USER_OTHER_TEXT_MAX_LENGTH);

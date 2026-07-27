@@ -47,7 +47,7 @@ export type PendingAskCloseResult =
   | { status: "closed"; outcome: AskUserOutcome }
   | { status: "stale" };
 
-/** Rejected input: the model asked something unanswerable, or an answer does not fit its question. */
+/** Rejected input: a question set is malformed, or an answer does not fit its question. */
 export class PendingAskValidationError extends Error {
   constructor(message: string) {
     super(message);
@@ -181,7 +181,7 @@ function questionLines(record: AskUserQuestionRecord): string[] {
   const header = `- ${record.question.id}: ${record.question.question}`;
   if (!record.answered) return [header, "  Unanswered."];
   const parts = [...record.values.map((value) => `selected ${value}`)];
-  if (record.otherText !== undefined) parts.push(`other: ${JSON.stringify(record.otherText)}`);
+  if (record.otherText !== undefined) parts.push(`custom: ${JSON.stringify(record.otherText)}`);
   return [header, `  Answered: ${parts.join("; ")}`];
 }
 
@@ -240,12 +240,6 @@ function validateQuestion(question: AskUserQuestion, id: string): AskUserQuestio
   if (question.options.length > ASK_USER_OPTION_LIMIT) {
     throw new PendingAskValidationError(`Question ${id} must not offer more than ${ASK_USER_OPTION_LIMIT.toString()} options`);
   }
-  const allowOther = question.allowOther === true;
-  // A question with neither options nor a free-text field cannot be answered at
-  // all, which would make its "unanswered" report meaningless.
-  if (question.options.length === 0 && !allowOther) {
-    throw new PendingAskValidationError(`Question ${id} must offer options or allow other text`);
-  }
   const seenValues = new Set<string>();
   const options = question.options.map((option) => {
     const value = requireId(option.value, `option value of question ${id}`);
@@ -259,7 +253,9 @@ function validateQuestion(question: AskUserQuestion, id: string): AskUserQuestio
     question: requireText(question.question, `text of question ${id}`),
     ...(detail === undefined ? {} : { detail: requireText(detail, `detail of question ${id}`) }),
     options,
-    ...(allowOther ? { allowOther: true } : {}),
+    // Every question accepts a custom answer. Retain the marker so older web
+    // clients also expose the field when connected to this daemon.
+    allowOther: true,
     ...(question.multiple === true ? { multiple: true } : {}),
   };
 }
@@ -307,7 +303,6 @@ function validateAnswer(question: AskUserQuestion, answer: AskUserAnswer): AskUs
 
 function normalizeOtherText(question: AskUserQuestion, otherText: string | undefined): string | undefined {
   if (otherText === undefined) return undefined;
-  if (question.allowOther !== true) throw new PendingAskValidationError(`Question ${question.id} does not accept other text`);
   if (otherText.length > ASK_USER_OTHER_TEXT_MAX_LENGTH) {
     throw new PendingAskValidationError(`Other text of question ${question.id} exceeds its length limit`);
   }

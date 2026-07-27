@@ -29,7 +29,7 @@ function toolOverStore(askIds: string[] = ["ask-1", "ask-2"]) {
 const twoQuestions = {
   questions: [
     { id: "db", question: "Which database?", options: [{ value: "pg", label: "Postgres" }, { value: "sqlite", label: "SQLite" }] },
-    { id: "why", question: "Why?", options: [], allowOther: true },
+    { id: "why", question: "Why?", options: [] },
   ],
 };
 
@@ -53,6 +53,7 @@ describe("createAskUserToolDefinition", () => {
       required: ["questions"],
       properties: { questions: { type: "array", minItems: 1, maxItems: 20 } },
     });
+    expect(tool.parameters).not.toHaveProperty("properties.questions.items.properties.allowOther");
   });
 
   it("opens the ask for the calling session and terminates the run instead of awaiting the user", async () => {
@@ -63,7 +64,7 @@ describe("createAskUserToolDefinition", () => {
     expect(open).toHaveBeenCalledWith({
       sessionId: "session-1",
       questions: [
-        { id: "db", question: "Which database?", options: [{ value: "pg", label: "Postgres" }, { value: "sqlite", label: "SQLite" }] },
+        { id: "db", question: "Which database?", options: [{ value: "pg", label: "Postgres" }, { value: "sqlite", label: "SQLite" }], allowOther: true },
         { id: "why", question: "Why?", options: [], allowOther: true },
       ],
     });
@@ -75,7 +76,7 @@ describe("createAskUserToolDefinition", () => {
   it("defaults a question without options to an empty option list so free text alone is expressible", async () => {
     const { open, tool } = toolOverStore();
 
-    await tool.execute("call-free", { questions: [{ id: "note", question: "Anything else?", allowOther: true }] }, undefined, undefined, ctxFor("session-1"));
+    await tool.execute("call-free", { questions: [{ id: "note", question: "Anything else?" }] }, undefined, undefined, ctxFor("session-1"));
 
     expect(open).toHaveBeenCalledWith({
       sessionId: "session-1",
@@ -83,7 +84,7 @@ describe("createAskUserToolDefinition", () => {
     });
   });
 
-  it("forwards per-question detail, option detail, and multi-select without inventing defaults", async () => {
+  it("adds custom answers while preserving detail, option detail, and multi-select", async () => {
     const { open, tool } = toolOverStore();
 
     await tool.execute("call-rich", {
@@ -103,6 +104,7 @@ describe("createAskUserToolDefinition", () => {
         question: "Which targets?",
         detail: "Pick every platform we should build for.",
         options: [{ value: "web", label: "Web", detail: "Chromium and Firefox" }, { value: "cli", label: "CLI" }],
+        allowOther: true,
         multiple: true,
       }],
     });

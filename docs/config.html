@@ -810,9 +810,9 @@
               <p>
                 The tool accepts one set of 1–20 questions. Each question has a unique <code>id</code>, its
                 <code>question</code> text, optional supporting <code>detail</code>, up to 12 options with stable values and
-                user-facing labels, and optional <code>allowOther</code> and <code>multiple</code> flags. A question must
-                offer at least one option or allow free text. No question is required: the user may leave any of them
-                unanswered.
+                user-facing labels, and an optional <code>multiple</code> flag. The browser always adds a
+                <strong>Custom</strong> free-text answer, including when the model supplies no options. No question is
+                required: the user may leave any of them unanswered.
               </p>
               <p>
                 Calling <code>ask_user</code> posts the whole set as one browser form and ends the current agent run

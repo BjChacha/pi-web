@@ -120,7 +120,7 @@ function submittableAnswer(question: AskUserQuestion, answer: AskDraftAnswer | u
   if (answer === undefined) return undefined;
   const offered = new Set(question.options.map((option) => option.value));
   const values = [...new Set(answer.values)].filter((value) => offered.has(value));
-  const otherText = normalizedOtherText(question, answer.otherText);
+  const otherText = normalizedOtherText(answer.otherText);
   if (question.multiple !== true && values.length + (otherText === undefined ? 0 : 1) > 1) {
     const single = values[0];
     if (single !== undefined) return { id: question.id, values: [single] };
@@ -130,8 +130,8 @@ function submittableAnswer(question: AskUserQuestion, answer: AskDraftAnswer | u
   return { id: question.id, values, ...(otherText === undefined ? {} : { otherText }) };
 }
 
-function normalizedOtherText(question: AskUserQuestion, otherText: string | undefined): string | undefined {
-  if (otherText === undefined || question.allowOther !== true) return undefined;
+function normalizedOtherText(otherText: string | undefined): string | undefined {
+  if (otherText === undefined) return undefined;
   const trimmed = otherText.trim().slice(0, ASK_USER_OTHER_TEXT_MAX_LENGTH);
   return trimmed === "" ? undefined : trimmed;
 }

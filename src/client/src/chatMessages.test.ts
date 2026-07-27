@@ -10,12 +10,12 @@ const askUserOutcome: AskUserOutcome = {
   closedAt: "2026-07-20T10:05:00.000Z",
   questions: [
     {
-      question: { id: "db", question: "Which database?", options: [{ value: "pg", label: "Postgres" }] },
+      question: { id: "db", question: "Which database?", options: [{ value: "pg", label: "Postgres" }], allowOther: true },
       answered: true,
       values: ["pg"],
     },
     {
-      question: { id: "cache", question: "Which cache?", options: [{ value: "redis", label: "Redis" }] },
+      question: { id: "cache", question: "Which cache?", options: [{ value: "redis", label: "Redis" }], allowOther: true },
       answered: false,
       values: [],
     },

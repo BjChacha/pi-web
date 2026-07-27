@@ -45,7 +45,7 @@ describe("PendingAskStore validation", () => {
           question: "Which database?",
           detail: "Only the primary store matters here.",
           options: [{ value: "pg", label: "Postgres", detail: "Existing cluster" }],
-          allowOther: true,
+          allowOther: false,
           multiple: false,
         },
       ],
@@ -79,7 +79,6 @@ describe("PendingAskStore validation", () => {
     expect(reject([question("q1"), question("q1")])).toThrow(/Duplicate question id q1/);
     expect(reject([question(" ")])).toThrow(/question id must not be empty/);
     expect(reject([question("q1", { question: "  " })])).toThrow(/text of question q1 must not be empty/);
-    expect(reject([question("q1", { options: [] })])).toThrow(/must offer options or allow other text/);
     expect(reject([question("q1", { options: [{ value: "a", label: "A" }, { value: "a", label: "Again" }] })]))
       .toThrow(/Duplicate option value a in question q1/);
     expect(reject([question("q1", { options: [{ value: "a", label: " " }] })]))
@@ -90,9 +89,9 @@ describe("PendingAskStore validation", () => {
     expect(store.pendingAsk(sessionId)).toBeUndefined();
   });
 
-  it("accepts a question that only offers free text", () => {
+  it("accepts an optionless question and adds the custom-answer compatibility marker", () => {
     const store = testStore();
-    const { ask } = store.open({ sessionId, questions: [question("q1", { options: [], allowOther: true })] });
+    const { ask } = store.open({ sessionId, questions: [question("q1", { options: [] })] });
     expect(ask.questions[0]).toEqual({ id: "q1", question: "Question q1?", options: [], allowOther: true });
   });
 });
@@ -143,7 +142,7 @@ describe("PendingAskStore submit", () => {
 
   it("treats an empty answer as leaving the question untouched", () => {
     const store = testStore();
-    const { ask } = store.open({ sessionId, questions: [question("q1"), question("q2", { allowOther: true })] });
+    const { ask } = store.open({ sessionId, questions: [question("q1"), question("q2")] });
 
     const result = store.submit(sessionId, ask.askId, {
       answers: [{ id: "q1", values: [] }, { id: "q2", values: [], otherText: "   " }],
@@ -161,11 +160,11 @@ describe("PendingAskStore submit", () => {
     expect(store.pendingAsk(sessionId)?.askId).toBe(ask.askId);
   });
 
-  it("accepts several values and coexisting other text for a multi-select question", () => {
+  it("accepts several values and coexisting custom text for a multi-select question", () => {
     const store = testStore();
     const { ask } = store.open({
       sessionId,
-      questions: [question("q1", { multiple: true, allowOther: true })],
+      questions: [question("q1", { multiple: true })],
     });
 
     const result = store.submit(sessionId, ask.askId, {
@@ -181,17 +180,20 @@ describe("PendingAskStore submit", () => {
     });
   });
 
-  it("rejects other text for a question that does not allow it", () => {
+  it("accepts custom text for every question", () => {
     const store = testStore();
     const { ask } = openTwoQuestions(store);
 
-    expect(() => store.submit(sessionId, ask.askId, { answers: [{ id: "q1", values: [], otherText: "custom" }] }))
-      .toThrow(/Question q1 does not accept other text/);
+    const result = store.submit(sessionId, ask.askId, { answers: [{ id: "q1", values: [], otherText: "custom" }] });
+
+    expect(result).toMatchObject({ status: "closed", outcome: { answeredCount: 1 } });
+    if (result.status !== "closed") throw new Error("expected the ask to close");
+    expect(result.outcome.questions[0]).toMatchObject({ answered: true, values: [], otherText: "custom" });
   });
 
-  it("answers a free-text-only question with other text alone", () => {
+  it("answers a free-text-only question with custom text alone", () => {
     const store = testStore();
-    const { ask } = store.open({ sessionId, questions: [question("q1", { options: [], allowOther: true })] });
+    const { ask } = store.open({ sessionId, questions: [question("q1", { options: [] })] });
 
     const result = store.submit(sessionId, ask.askId, { answers: [{ id: "q1", values: [], otherText: "a note" }] });
 
@@ -294,7 +296,7 @@ describe("ask outcome rendering", () => {
     const store = testStore();
     const { ask } = store.open({
       sessionId,
-      questions: [question("q1"), question("q2", { allowOther: true }), question("q3")],
+      questions: [question("q1"), question("q2"), question("q3")],
     });
     const result = store.submit(sessionId, ask.askId, {
       answers: [{ id: "q1", values: ["yes"] }, { id: "q2", values: [], otherText: "something else" }],
@@ -307,7 +309,7 @@ describe("ask outcome rendering", () => {
       "- q1: Question q1?",
       "  Answered: selected yes",
       "- q2: Question q2?",
-      `  Answered: other: "something else"`,
+      `  Answered: custom: "something else"`,
       "- q3: Question q3?",
       "  Unanswered.",
       "",

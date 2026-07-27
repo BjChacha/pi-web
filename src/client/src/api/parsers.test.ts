@@ -723,14 +723,14 @@ describe("API parsers", () => {
     })).toThrow("Invalid notification clear reason");
   });
 
-  it("parses an open ask with options, details, other, and multi-select", () => {
+  it("parses an open ask and normalizes every question to allow custom answers", () => {
     const parsed = parseSessionStatus({ ...statusWire(), pendingAsk: pendingAskWire() });
 
     expect(parsed.pendingAsk).toEqual({
       askId: "ask-1",
       askedAt: "2026-07-20T00:00:00.000Z",
       questions: [
-        { id: "q1", question: "Which database?", detail: "Pick the primary store", options: [{ value: "pg", label: "Postgres", detail: "Relational" }, { value: "sqlite", label: "SQLite" }] },
+        { id: "q1", question: "Which database?", detail: "Pick the primary store", options: [{ value: "pg", label: "Postgres", detail: "Relational" }, { value: "sqlite", label: "SQLite" }], allowOther: true },
         { id: "q2", question: "Which extras?", options: [{ value: "metrics", label: "Metrics" }], allowOther: true, multiple: true },
       ],
     });
@@ -740,13 +740,15 @@ describe("API parsers", () => {
     expect(parseSessionStatus(statusWire()).pendingAsk).toBeUndefined();
   });
 
-  it("rejects an ask that cannot be rendered or answered honestly", () => {
+  it("validates an ask before rendering it", () => {
     const ask = pendingAskWire();
     const first = ask.questions[0];
     expect(() => parseSessionStatus({ ...statusWire(), pendingAsk: { ...ask, questions: [] } })).toThrow("Pending ask has no questions");
     expect(() => parseSessionStatus({ ...statusWire(), pendingAsk: { ...ask, questions: [first, first] } })).toThrow("Duplicate ask question id");
     expect(() => parseSessionStatus({ ...statusWire(), pendingAsk: { ...ask, askId: "" } })).toThrow("Expected non-empty string field: askId");
-    expect(() => parseSessionStatus({ ...statusWire(), pendingAsk: { ...ask, questions: [{ id: "q1", question: "Anything?", options: [] }] } })).toThrow("Ask question offers no way to answer");
+    expect(parseSessionStatus({ ...statusWire(), pendingAsk: { ...ask, questions: [{ id: "q1", question: "Anything?", options: [] }] } }).pendingAsk?.questions[0])
+      .toEqual({ id: "q1", question: "Anything?", options: [], allowOther: true });
+    expect(() => parseSessionStatus({ ...statusWire(), pendingAsk: { ...ask, questions: [{ id: "q1", question: "Anything?", options: [], allowOther: "yes" }] } })).toThrow("Expected optional boolean field: allowOther");
     expect(() => parseSessionStatus({ ...statusWire(), pendingAsk: { ...ask, questions: [{ id: "q1", question: "Which?", options: [{ value: "a", label: "A" }, { value: "a", label: "Also A" }] }] } })).toThrow("Duplicate ask option value");
     expect(() => parseSessionStatus({ ...statusWire(), pendingAsk: { ...ask, questions: [{ id: "q1", question: "x".repeat(ASK_USER_TEXT_MAX_LENGTH + 1), options: [{ value: "a", label: "A" }] }] } })).toThrow("String field exceeds limit: question");
   });
@@ -814,7 +816,7 @@ function pendingAskWire() {
     askId: "ask-1",
     askedAt: "2026-07-20T00:00:00.000Z",
     questions: [
-      { id: "q1", question: "Which database?", detail: "Pick the primary store", options: [{ value: "pg", label: "Postgres", detail: "Relational" }, { value: "sqlite", label: "SQLite" }] },
+      { id: "q1", question: "Which database?", detail: "Pick the primary store", options: [{ value: "pg", label: "Postgres", detail: "Relational" }, { value: "sqlite", label: "SQLite" }], allowOther: false },
       { id: "q2", question: "Which extras?", options: [{ value: "metrics", label: "Metrics" }], allowOther: true, multiple: true },
     ],
   };
