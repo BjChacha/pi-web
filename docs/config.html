@@ -270,7 +270,7 @@
                 it, and whether project-local config overrides or merges with global config. Rows with JSON key
                 <code>—</code> are runtime-only environment variables, not config-file keys. <code>Global</code> means
                 machine-global. In Settings, selected-machine-safe global keys (<code>pathAccess</code>, <code>uploads</code>,
-                <code>maxUploadBytes</code>, <code>agent</code>, <code>spawnSessions</code>, <code>subsessions</code>, and <code>plugins</code>)
+                <code>maxUploadBytes</code>, <code>agent</code>, <code>spawnSessions</code>, <code>subsessions</code>, <code>askUser</code>, and <code>plugins</code>)
                 are edited for the selected machine; gateway host/port/allowed-hosts, keyboard shortcuts, and machine
                 registry/tokens stay local.
               </p>
@@ -806,6 +806,10 @@
                 <code>askUser</code> controls whether agents receive the core <code>ask_user</code> tool. It defaults to
                 <code>true</code>; set it to <code>false</code>, or set <code>PI_WEB_ASK_USER=false</code>, to remove the
                 tool. The environment override accepts <code>0|1|true|false</code> and takes precedence over the config file.
+              </p>
+              <p>
+                Use <strong>Settings → Session daemon → Allow agents to ask questions</strong> to change
+                <code>askUser</code> on the selected machine. An environment override makes the toggle read-only.
               </p>
               <p>
                 The tool accepts one set of 1–20 questions. Each question has a unique <code>id</code>, its

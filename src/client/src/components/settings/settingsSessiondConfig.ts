@@ -11,6 +11,10 @@ export function subsessionsConfigPatch(enabled: boolean): PiWebConfigValues {
   return { subsessions: enabled };
 }
 
+export function askUserConfigPatch(enabled: boolean): PiWebConfigValues {
+  return { askUser: enabled };
+}
+
 export function agentProfileActivationState(
   config: PiWebConfigResponse | undefined,
   activeProfile: ActiveAgentProfileDescriptor | undefined,
