@@ -19,6 +19,7 @@ export class WorkspaceList extends LitElement implements KeyboardNavigableSectio
   @property({ attribute: false }) workspaceLabelItems: (workspace: Workspace) => WorkspaceLabelItem[] = () => [];
   @property({ attribute: false }) activities: Record<string, WorkspaceActivity> = {};
   @property({ attribute: false }) deletingWorkspaceIds: string[] = [];
+  @property({ attribute: false }) unreadWorkspaceIds: ReadonlySet<string> = new Set();
   @property({ attribute: false }) onSelect?: (workspace: Workspace) => void;
   @property({ attribute: false }) onDelete?: (workspace: Workspace) => void;
   @property({ attribute: false }) onToggleCollapsed?: () => void;
@@ -105,7 +106,8 @@ export class WorkspaceList extends LitElement implements KeyboardNavigableSectio
 
   private renderActivity(workspace: Workspace): TemplateResult | undefined {
     const kind = workspaceActivityIndicator(workspaceActivityFor(workspace, this.activities));
-    return renderActionActivityIndicator(kind, kind === "terminal" ? "Workspace terminal active" : "Workspace active");
+    const unreadLabel = this.unreadWorkspaceIds.has(workspace.id) ? "Unread sessions in this workspace" : undefined;
+    return renderActionActivityIndicator(kind, kind === "terminal" ? "Workspace terminal active" : "Workspace active", unreadLabel);
   }
 
   private renderWorkspaceMain(label: string, items: WorkspaceLabelItem[], workspace: Workspace): TemplateResult {
