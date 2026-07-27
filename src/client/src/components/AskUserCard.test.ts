@@ -82,6 +82,7 @@ describe("ask-user-card live form", () => {
     const textarea = requiredElement(root.querySelector("textarea"), "custom textarea");
     const label = requiredElement(textarea.closest("label"), "custom label");
     expect(label.textContent).toContain("Custom answer");
+    expect(getComputedStyle(textarea).fontSize).toBe("16px");
     expect(root.activeElement).toBe(textarea);
 
     textarea.value = "Svelte";

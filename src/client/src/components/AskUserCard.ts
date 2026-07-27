@@ -492,8 +492,7 @@ export class AskUserCard extends LitElement {
       background: var(--pi-bg);
       color: var(--pi-text);
       padding: 8px;
-      font: inherit;
-      line-height: 1.4;
+      font: var(--pi-control-font-size, 16px)/1.4 var(--pi-control-font-family, system-ui, sans-serif);
     }
     .form-footer {
       display: flex;
