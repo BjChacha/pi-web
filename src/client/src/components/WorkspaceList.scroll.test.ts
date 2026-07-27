@@ -78,6 +78,8 @@ async function renderWorkspaceList(options: { workspaces: Workspace[]; selected?
 }
 
 async function settled(list: WorkspaceList): Promise<void> {
+  // Mirror of SessionList's settled(): await two update cycles so any render
+  // scheduled from within updated() has completed before asserting.
   await list.updateComplete;
   await list.updateComplete;
 }
