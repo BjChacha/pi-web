@@ -103,6 +103,13 @@ export interface PiWebConfigValues {
    * tool. On by default; set to `false` to remove the tool from the runtime.
    */
   askUser?: boolean;
+  /**
+   * How long an extension dialog may wait for an answer before the daemon
+   * auto-cancels it, in milliseconds. Applies only when the extension set no
+   * `timeout` of its own (the sooner of the two wins); `0` waits forever.
+   * Tuning knob only — extension dialogs are always enabled.
+   */
+  extensionDialogsTimeoutMs?: number;
   /** Desired Pi-compatible agent profile and companion CLI (Pi by default). */
   agent?: PiWebAgentConfig;
 }
@@ -660,6 +667,38 @@ export interface ExtensionDialogOutcome {
   answer?: ExtensionDialogAnswer;
   askedAt: string;
   closedAt: string;
+}
+
+/**
+ * Browser request to answer an open extension dialog with the user's value.
+ * `cwd` rides along as the standard session-lookup field, as on every other
+ * session route; whether the value fits the dialog's kind is the store's call,
+ * so an ill-fitting answer is a 400 that leaves the dialog open.
+ */
+export interface ExtensionDialogAnswerRequest {
+  cwd?: string;
+  dialogId: string;
+  value: ExtensionDialogAnswer;
+}
+
+/** Browser request to dismiss an open extension dialog without an answer. */
+export interface ExtensionDialogCancelRequest {
+  cwd?: string;
+  dialogId: string;
+}
+
+/**
+ * Result of the browser answering or cancelling an extension dialog. Mirrors
+ * {@link AskUserCloseResponse}: `"stale"` is an ordinary lost race — another
+ * browser, a timeout, or a teardown closed the dialog first — not an error.
+ * The browser drops its card and trusts `sessionStatus`, which is returned in
+ * both cases so closing a dialog needs no follow-up status request.
+ */
+export interface ExtensionDialogCloseResponse {
+  result: "closed" | "stale";
+  /** Present only when this call is the one that closed the dialog. */
+  outcome?: ExtensionDialogOutcome;
+  sessionStatus: SessionStatus;
 }
 
 /**
