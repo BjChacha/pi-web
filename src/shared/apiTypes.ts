@@ -433,6 +433,14 @@ export interface SessionActivity {
   label: string;
   detail?: string;
   at: string;
+  /**
+   * Set only on the startup window's own reports. A startup phase is genuinely
+   * in progress, so it is published as `active` and rendered like any other
+   * activity, but *starting* a session is not *working* in it: there is nothing
+   * to stop, nothing that blocks reloading from disk, and no workspace-level
+   * work to report. `isSessionActive()` reads this to keep the two apart.
+   */
+  startup?: boolean;
 }
 
 export interface QueuedSessionMessage {
@@ -570,18 +578,18 @@ export interface AskUserCloseResponse {
  * constructing the agent session and no `PiAgentSession` exists yet, so
  * `activity.update` cannot be published for it.
  *
- * `cwd` is the routing key for a browser row that is still waiting for a
- * session id: a client-invented pending start knows its workspace path but not
- * the daemon's session id. `activity.sessionId` carries the daemon's real id, so
- * the same event also serves the case where the browser already knows it (an
- * open of an existing session).
+ * `startupToken` is the opaque label a create request supplied, echoed back so a
+ * browser row still waiting for a session id recognises its own construction.
+ * The daemon never interprets it and it never becomes the session id:
+ * `activity.sessionId` always carries the real id, which is how an *open* of a
+ * session the browser already knows is routed instead.
  *
  * `activity.phase === "idle"` means the startup window ended with nothing left
  * to report, so a browser that substituted its own text should restore it.
  */
 export interface SessionStartupProgressEvent {
   type: "session.startup";
-  cwd: string;
+  startupToken?: string;
   activity: SessionActivity;
 }
 

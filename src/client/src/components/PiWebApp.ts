@@ -435,6 +435,7 @@ export class PiWebApp extends LitElement {
       this.sessions.refreshSelectedSession(),
       this.refreshMachineActivities(),
       this.refreshWorkspaceDeletionRuns(),
+      this.workspaces.refreshSelectedProjectTopology(),
     ]);
   }
 
@@ -492,6 +493,7 @@ export class PiWebApp extends LitElement {
         this.loadClientConfig(),
         this.refreshWorkspaceDeletionRuns(),
         this.refreshCurrentWorkspaceSurface(),
+        this.workspaces.refreshSelectedProjectTopology(),
       ]);
       this.schedulePiWebStatusRefresh();
     } finally {
@@ -1789,6 +1791,8 @@ export class PiWebApp extends LitElement {
       configureAuth: () => this.auth.openLogin(),
       logoutAuth: () => this.auth.openLogout(),
       openThemePicker: () => { this.openThemeDialog(); },
+      openModelPicker: () => this.openModelDialog(),
+      openThinkingLevelPicker: () => this.openThinkingDialog(),
       selectMainView: (view) => { this.selectMainView(view); },
       selectWorkspaceTool: (tool) => { this.openWorkspaceTool(tool); },
       openTerminal: (options) => { this.openTerminal(options); },
