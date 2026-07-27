@@ -46,7 +46,19 @@ export class WorkspaceList extends LitElement implements KeyboardNavigableSectio
   protected override updated(changed: PropertyValues<this>): void {
     if (changed.has("workspaces") && this.openMenuWorkspaceId !== undefined && !this.workspaces.some((workspace) => workspace.id === this.openMenuWorkspaceId)) this.openMenuWorkspaceId = undefined;
     if (changed.has("collapsed") && this.collapsed) this.openMenuWorkspaceId = undefined;
-    if ((changed.has("selected") || changed.has("workspaces") || changed.has("collapsed")) && !this.collapsed) this.scrollSelectedIntoView();
+    if (this.shouldRevealSelectedRow(changed)) this.scrollSelectedIntoView();
+  }
+
+  /**
+   * Positive reveal triggers only: topology refreshes replace `workspaces`
+   * with a new array for the same selection and must never re-scroll. Reveal
+   * the selected row only when the selection moves to a different row (first
+   * render with a selection included) or when the section expands.
+   */
+  private shouldRevealSelectedRow(changed: PropertyValues<this>): boolean {
+    if (this.collapsed) return false;
+    if (changed.has("collapsed")) return true;
+    return changed.has("selected") && changed.get("selected")?.id !== this.selected?.id;
   }
 
   async focusSelectedOrFirst(): Promise<boolean> {

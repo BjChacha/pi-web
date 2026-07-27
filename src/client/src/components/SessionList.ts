@@ -94,7 +94,24 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
       void this.updateComplete.then(() => { this.scrollSelectedIntoView(); });
       return;
     }
-    if ((changed.has("selected") || changed.has("sessions") || changed.has("collapsed")) && !this.collapsed) this.scrollSelectedIntoView();
+    if (this.shouldRevealSelectedRow(changed)) this.scrollSelectedIntoView();
+  }
+
+  /**
+   * Positive reveal triggers only: live data refreshes replace `sessions` and
+   * `selected` with same-id objects (status churn, renames, archive flips) and
+   * must never re-scroll. Reveal the selected row only when the selection
+   * moves to a different row (first render with a selection included), when a
+   * restore moves it from the archived section back to the current section
+   * (same id, archived flag cleared), or when the section expands.
+   */
+  private shouldRevealSelectedRow(changed: PropertyValues<this>): boolean {
+    if (this.collapsed) return false;
+    if (changed.has("collapsed")) return true;
+    if (!changed.has("selected")) return false;
+    const previousSelected = changed.get("selected");
+    if (previousSelected?.id !== this.selected?.id) return true;
+    return previousSelected?.archived === true && this.selected?.archived !== true;
   }
 
   async focusSelectedOrFirst(): Promise<boolean> {
