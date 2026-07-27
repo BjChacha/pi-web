@@ -38,6 +38,8 @@ function createContext(statePatch: Partial<AppState> = {}) {
     configureAuth: vi.fn(() => { calls.push("configureAuth"); }),
     logoutAuth: vi.fn(() => { calls.push("logoutAuth"); }),
     openThemePicker: vi.fn(() => { calls.push("openThemePicker"); }),
+    openModelPicker: vi.fn(() => { calls.push("openModelPicker"); }),
+    openThinkingLevelPicker: vi.fn(() => { calls.push("openThinkingLevelPicker"); }),
     selectMainView: vi.fn((view: AppState["mainView"]) => { calls.push(`selectMainView:${view}`); }),
     selectWorkspaceTool: vi.fn((tool: AppState["workspaceTool"]) => { calls.push(`selectWorkspaceTool:${tool}`); }),
     openTerminal: vi.fn((options?: { terminalId?: string | undefined }) => { calls.push(`openTerminal:${options?.terminalId ?? ""}`); }),
@@ -288,6 +290,34 @@ describe("PluginRegistry", () => {
     if (action !== undefined) void action.run();
 
     expect(calls).toEqual(["deleteCachedNewSession"]);
+  });
+
+  it("exposes model and thinking selectors as configurable actions for writable sessions", () => {
+    const registry = new PluginRegistry();
+    registry.register({ id: "core", plugin: corePlugin });
+
+    const unavailable = registry.getActions(createContext().context);
+    expect(unavailable.find((action) => action.id === "core:model.select")?.enabled).toBe(false);
+    expect(unavailable.find((action) => action.id === "core:thinking.select")?.enabled).toBe(false);
+
+    const archivedSession = { ...testSession(), archived: true, archivedAt: "2026-05-20T00:00:00.000Z" };
+    const archived = registry.getActions(createContext({ selectedSession: archivedSession }).context);
+    expect(archived.find((action) => action.id === "core:model.select")?.enabled).toBe(false);
+    expect(archived.find((action) => action.id === "core:thinking.select")?.enabled).toBe(false);
+
+    const { context, calls } = createContext({ selectedSession: testSession() });
+    const actions = registry.getActions(context);
+    const modelAction = actions.find((action) => action.id === "core:model.select");
+    const thinkingAction = actions.find((action) => action.id === "core:thinking.select");
+    expect(modelAction).toMatchObject({ title: "Select Model", enabled: true });
+    expect(modelAction?.shortcut).toBeUndefined();
+    expect(thinkingAction).toMatchObject({ title: "Select Thinking Level", enabled: true });
+    expect(thinkingAction?.shortcut).toBeUndefined();
+
+    if (modelAction !== undefined) void modelAction.run();
+    if (thinkingAction !== undefined) void thinkingAction.run();
+
+    expect(calls).toEqual(["openModelPicker", "openThinkingLevelPicker"]);
   });
 
   it("routes refresh current to the active core workspace panel", () => {

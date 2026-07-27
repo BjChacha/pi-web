@@ -1791,6 +1791,8 @@ export class PiWebApp extends LitElement {
       configureAuth: () => this.auth.openLogin(),
       logoutAuth: () => this.auth.openLogout(),
       openThemePicker: () => { this.openThemeDialog(); },
+      openModelPicker: () => this.openModelDialog(),
+      openThinkingLevelPicker: () => this.openThinkingDialog(),
       selectMainView: (view) => { this.selectMainView(view); },
       selectWorkspaceTool: (tool) => { this.openWorkspaceTool(tool); },
       openTerminal: (options) => { this.openTerminal(options); },
