@@ -136,6 +136,10 @@ function lookupMatchesActiveSession(ref: PiSessionLookup, active: ActiveSession<
   return !isPiSessionRef(ref) || cwdPathsEqual(active.runtime.cwd, ref.cwd);
 }
 
+function lookupMatchesStartupSession(ref: PiSessionLookup, session: PiAgentSession): boolean {
+  return !isPiSessionRef(ref) || cwdPathsEqual(session.sessionManager.getCwd(), ref.cwd);
+}
+
 type QueuedPromptKind = "steer" | "followUp";
 
 interface QueuedPrompt {
@@ -755,6 +759,14 @@ export interface PiSessionServiceDependencies {
 export class PiSessionService implements SessionRouteService {
   private readonly active = new Map<string, ActiveSession<PiSessionRuntime>>();
   private readonly pendingSessionOpens = new Map<string, PendingSessionOpen>();
+  /**
+   * Sessions whose extension binding is still in flight. A `session_start`
+   * dialog parks that window before the session ever becomes active, so this
+   * is the only way the dialog answer/cancel and status paths can reach it;
+   * {@link getOrOpen} never consults it, keeping every other operation gated
+   * on full readiness.
+   */
+  private readonly startupSessions = new Map<string, PiAgentSession>();
   private readonly activities = new Map<string, { phase: "active" | "idle" | "error"; label: string; detail?: string; at: string }>();
   private readonly heartbeat: NodeJS.Timeout;
   private readonly commandService: SessionCommandService<PiAgentSession>;
@@ -1003,6 +1015,7 @@ export class PiSessionService implements SessionRouteService {
     }
     this.active.clear();
     this.pendingSessionOpens.clear();
+    this.startupSessions.clear();
     this.activities.clear();
     this.compactionPromptQueues.clear();
     this.authLossWarnings.clear();
@@ -1300,7 +1313,7 @@ export class PiSessionService implements SessionRouteService {
    */
   async answerDialog(ref: PiSessionLookup, dialogId: string, value: ExtensionDialogAnswer): Promise<ExtensionDialogCloseResponse> {
     await this.assertWritable(ref);
-    const session = await this.getOrOpen(ref);
+    const session = await this.sessionForStatusOrDialogClose(ref);
     const result = this.pendingExtensionDialogStore.answer(session.sessionId, dialogId, value);
     if (result.status === "stale") return { result: "stale", sessionStatus: this.statusFromSession(session) };
     const { outcome } = result;
@@ -1314,7 +1327,7 @@ export class PiSessionService implements SessionRouteService {
   /** Close an open extension dialog without an answer; the extension's wait settles with its kind's cancel value. */
   async cancelDialog(ref: PiSessionLookup, dialogId: string): Promise<ExtensionDialogCloseResponse> {
     await this.assertWritable(ref);
-    const session = await this.getOrOpen(ref);
+    const session = await this.sessionForStatusOrDialogClose(ref);
     const result = this.pendingExtensionDialogStore.cancel(session.sessionId, dialogId, "cancelled");
     if (result.status === "stale") return { result: "stale", sessionStatus: this.statusFromSession(session) };
     const { outcome } = result;
@@ -1781,7 +1794,7 @@ export class PiSessionService implements SessionRouteService {
   }
 
   async status(ref: PiSessionLookup): Promise<ClientSessionStatus> {
-    return this.statusFromSession(await this.getOrOpen(ref));
+    return this.statusFromSession(await this.sessionForStatusOrDialogClose(ref));
   }
 
   /**
@@ -2718,6 +2731,28 @@ export class PiSessionService implements SessionRouteService {
     return undefined;
   }
 
+  private startupSessionForLookup(ref: PiSessionLookup): PiAgentSession | undefined {
+    const sessionId = sessionIdFromLookup(ref);
+    const exact = this.startupSessions.get(sessionId);
+    if (exact !== undefined && lookupMatchesStartupSession(ref, exact)) return exact;
+    for (const [candidateId, session] of this.startupSessions.entries()) {
+      if (candidateId.startsWith(sessionId) && lookupMatchesStartupSession(ref, session)) return session;
+    }
+    return undefined;
+  }
+
+  /**
+   * The session to serve a read-only status or a dialog close for, while it
+   * can still be found: active first, then still starting up, and only then
+   * the on-demand open path (which a stale close on an idle session needs for
+   * its status projection).
+   */
+  private async sessionForStatusOrDialogClose(ref: PiSessionLookup): Promise<PiAgentSession> {
+    const reachable = this.activeForLookup(ref)?.runtime.session ?? this.startupSessionForLookup(ref);
+    if (reachable !== undefined) return reachable;
+    return this.getOrOpen(ref);
+  }
+
   /**
    * Construct a session while telling waiting browsers which phase of startup
    * they are waiting on. The reporting wraps the *whole* construction rather
@@ -2871,15 +2906,24 @@ export class PiSessionService implements SessionRouteService {
     generation: SessionNotificationGeneration | undefined,
   ): Promise<void> {
     const uiContext = this.sessionUiContext(session, generation);
-    await session.bindExtensions({
-      uiContext,
-      mode: "rpc",
-      onError: (error) => {
-        const message = `${error.extensionPath}: ${error.error}`;
-        this.publishActivity(session, "extension error", "error", message);
-        this.events.publish(session.sessionId, { type: "session.error", message });
-      },
-    });
+    // A `session_start` hook can park this bind on a dialog the browser has
+    // not answered yet. On the initial create/open path the session becomes
+    // active only after this returns, so register it for the duration: the
+    // answer that unblocks startup has to be reachable while it waits.
+    this.startupSessions.set(session.sessionId, session);
+    try {
+      await session.bindExtensions({
+        uiContext,
+        mode: "rpc",
+        onError: (error) => {
+          const message = `${error.extensionPath}: ${error.error}`;
+          this.publishActivity(session, "extension error", "error", message);
+          this.events.publish(session.sessionId, { type: "session.error", message });
+        },
+      });
+    } finally {
+      this.startupSessions.delete(session.sessionId);
+    }
   }
 
   private replaceSessionNotificationContext(session: PiAgentSession, generation: SessionNotificationGeneration): void {

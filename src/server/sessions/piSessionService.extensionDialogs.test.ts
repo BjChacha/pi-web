@@ -520,3 +520,81 @@ describe("PiSessionService extension dialog status projection", () => {
     await service.dispose();
   });
 });
+
+describe("PiSessionService session_start dialog startup reachability", () => {
+  /**
+   * A `session_start` dialog parks session construction before the session
+   * ever becomes active: the bind below models the issue's probe by awaiting
+   * a confirm inside extension binding. The dialog must stay reachable —
+   * statusable and answerable — in that window, or startup could never be
+   * unblocked from the browser.
+   */
+  function startupDialogService() {
+    const harness = dialogService();
+    const confirmAnswers: (boolean | string | undefined)[] = [];
+    harness.fake.session.bindExtensions = (bindings) => {
+      harness.fake.calls.bindExtensions.push(bindings);
+      if (bindings.uiContext === undefined) return Promise.resolve();
+      return bindings.uiContext.confirm("Proceed at startup?", "Really?").then((answer) => {
+        confirmAnswers.push(answer);
+      });
+    };
+    return { ...harness, confirmAnswers };
+  }
+
+  async function parkOnStartupDialog(store: PendingExtensionDialogStore): Promise<void> {
+    await vi.waitFor(() => {
+      expect(store.pendingDialogs(ACTIVE_SESSION_ID)).toHaveLength(1);
+    });
+  }
+
+  it("serves status for a session still parked on a session_start dialog", async () => {
+    const { service, store } = startupDialogService();
+    const started = service.start("/workspace");
+    await parkOnStartupDialog(store);
+
+    const status = await service.status(sessionRef(ACTIVE_SESSION_ID));
+
+    expect(status.pendingDialogs).toEqual([
+      expect.objectContaining({ dialogId: "dialog-1", kind: "confirm", title: "Proceed at startup?", runScoped: false }),
+    ]);
+    await service.answerDialog(sessionRef(ACTIVE_SESSION_ID), "dialog-1", true);
+    await started;
+    await service.dispose();
+  });
+
+  it("answers a session_start dialog mid-startup so creation can finish", async () => {
+    const { service, store, confirmAnswers } = startupDialogService();
+    const started = service.start("/workspace");
+    await parkOnStartupDialog(store);
+
+    const response = await service.answerDialog(sessionRef(ACTIVE_SESSION_ID), "dialog-1", true);
+
+    expect(response.result).toBe("closed");
+    expect(response.outcome).toMatchObject({ dialogId: "dialog-1", reason: "answered", answer: true });
+    expect(response.sessionStatus.pendingDialogs ?? []).toEqual([]);
+    const created = await started;
+    expect(created.id).toBe(ACTIVE_SESSION_ID);
+    expect(confirmAnswers).toEqual([true]);
+    expect(store.pendingDialogs(ACTIVE_SESSION_ID)).toEqual([]);
+    // Readiness handed the session to the active path: a repeat answer races
+    // lost against the already-closed dialog instead of erroring.
+    const repeat = await service.answerDialog(sessionRef(ACTIVE_SESSION_ID), "dialog-1", true);
+    expect(repeat.result).toBe("stale");
+    await service.dispose();
+  });
+
+  it("cancels a session_start dialog mid-startup with the kind's cancel value", async () => {
+    const { service, store, confirmAnswers } = startupDialogService();
+    const started = service.start("/workspace");
+    await parkOnStartupDialog(store);
+
+    const response = await service.cancelDialog(sessionRef(ACTIVE_SESSION_ID), "dialog-1");
+
+    expect(response.result).toBe("closed");
+    expect(response.outcome).toMatchObject({ dialogId: "dialog-1", reason: "cancelled" });
+    await started;
+    expect(confirmAnswers).toEqual([false]);
+    await service.dispose();
+  });
+});
