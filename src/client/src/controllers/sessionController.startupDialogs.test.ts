@@ -298,4 +298,68 @@ describe("SessionController session_start dialog startup reachability", () => {
     resolveBackendSession(harness);
     await start;
   });
+
+  it("drops a mid-startup status snapshot that lands after the readiness swap", async () => {
+    const state = { current: { ...initialAppState(), selectedWorkspace: workspace, sessions: [] } };
+    const resyncRequest = deferred<SessionStatus>();
+    let resyncIssued = false;
+    const harness = pendingStartController(state, {
+      status: (session) => {
+        // The first backend status call is the subscribe-time resync; hold it
+        // until after the swap. Later calls (the readiness join) answer fresh.
+        if (sessionLookupId(session) === BACKEND_SESSION_ID && !resyncIssued) {
+          resyncIssued = true;
+          return resyncRequest.promise;
+        }
+        return Promise.resolve(status(sessionLookupId(session)));
+      },
+    });
+    const { start, tempId } = beginPendingStart(harness);
+    reportBackendSessionId(harness, tempId);
+    harness.socket.emit({ type: "dialog.opened", dialog: dialog("dialog-1") });
+    expect(harness.state.current.pendingDialogs).toEqual([dialog("dialog-1")]);
+
+    resolveBackendSession(harness);
+    await start;
+    await vi.waitFor(() => { expect(harness.state.current.selectedSession?.id).toBe(BACKEND_SESSION_ID); });
+
+    // The stale snapshot — issued before the swap and claiming dialog-1 is
+    // still open — must not clobber the real session's fresher state.
+    resyncRequest.resolve(statusWithDialogs(BACKEND_SESSION_ID, [dialog("dialog-1")]));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(harness.state.current.pendingDialogs).toEqual([]);
+    expect(harness.state.current.sessionStatuses[BACKEND_SESSION_ID]?.pendingDialogs ?? []).toEqual([]);
+  });
+
+  it("drops the dead card, closes the socket, and ignores late frames when the create fails mid-startup", async () => {
+    const state = { current: { ...initialAppState(), selectedWorkspace: workspace, sessions: [] } };
+    let answerCalled = false;
+    const harness = pendingStartController(state, {
+      answerDialog: () => {
+        answerCalled = true;
+        return Promise.resolve(closeResponse(status(BACKEND_SESSION_ID)));
+      },
+    });
+    const closeSpy = vi.spyOn(harness.socket, "close");
+    const { start, tempId } = beginPendingStart(harness);
+    reportBackendSessionId(harness, tempId);
+    harness.socket.emit({ type: "dialog.opened", dialog: dialog("dialog-1") });
+    expect(harness.state.current.pendingDialogs).toEqual([dialog("dialog-1")]);
+
+    closeSpy.mockClear();
+    harness.startRequest.reject(new Error("create exploded"));
+    await start;
+
+    expect(harness.state.current.error).toBe("Failed to start session: create exploded");
+    expect(harness.state.current.pendingDialogs).toEqual([]);
+    expect(closeSpy).toHaveBeenCalled();
+
+    // Late frames from the dead session are dropped, and no answer can leave.
+    harness.socket.emit({ type: "dialog.opened", dialog: dialog("dialog-2") });
+    expect(harness.state.current.pendingDialogs).toEqual([]);
+    await harness.controller.answerDialog("dialog-2", true);
+    expect(answerCalled).toBe(false);
+  });
 });

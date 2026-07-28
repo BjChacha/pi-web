@@ -1214,9 +1214,15 @@ export class SessionController {
     const pending = this.pendingSessionStarts.get(tempId);
     if (pending === undefined) return;
     this.pendingSessionStarts.delete(tempId);
+    const wasDiscarded = pending.discarded;
+    // The pending start is dead: stop routing its dialog frames (a card on the
+    // failed row could never be answered) and drop the early-subscribed socket
+    // so it stops reconnecting against a session that may not exist.
+    pending.discarded = true;
+    if (this.getState().selectedSession?.id === tempId) this.socket.close();
     const releasedCreatedSessions = this.takeSuppressedCreatedSessionsFor(pending.cwd, pending.machineId);
     const isCurrentPendingStart = this.isCurrentPendingStart(pending);
-    if (pending.discarded || !isCurrentPendingStart) {
+    if (wasDiscarded || !isCurrentPendingStart) {
       if (isCurrentPendingStart) this.applyReleasedCreatedSessions(releasedCreatedSessions, pending.machineId);
       return;
     }
@@ -1228,6 +1234,9 @@ export class SessionController {
       sessions: hasPendingRow ? state.sessions : [pending.session, ...state.sessions],
       sessionActivities: { ...state.sessionActivities, [tempId]: activity },
       activity: state.selectedSession?.id === tempId ? activity : state.activity,
+      // Open cards on the failed row are dead: the create is gone, so no
+      // answer could ever reach the daemon. Settled outcomes stay as history.
+      ...(state.selectedSession?.id === tempId ? { pendingDialogs: [] } : {}),
       error: `Failed to start session: ${message}`,
     });
     this.applyReleasedCreatedSessions(releasedCreatedSessions, pending.machineId);
@@ -1585,8 +1594,11 @@ export class SessionController {
     if (backendSessionId === undefined) return;
     void this.api.status({ id: backendSessionId, cwd: pending.cwd }, pending.machineId).then(
       (status) => {
-        this.applyStatus(status);
+        // Guard before applying: this unordered snapshot can land after the
+        // readiness swap made the real session selected, and a stale replace
+        // must not clobber the socket's fresher dialog state.
         if (pending.discarded || this.getState().selectedSession?.id !== pending.tempId) return;
+        this.applyStatus(status);
         const state = this.getState();
         const knownIds = new Set<string>([
           ...state.pendingDialogs.map((pendingDialog) => pendingDialog.dialogId),

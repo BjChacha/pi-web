@@ -58,7 +58,8 @@ export function extensionDialogCountdownText(timeoutAt: string | undefined, nowM
   const seconds = Math.ceil(remainingMs / 1000);
   if (seconds >= 3600) {
     const hours = Math.floor(seconds / 3600);
-    const minutes = Math.round((seconds % 3600) / 60);
+    // Floor, not round: rounding yields "1h 60m" in the last half-minute of an hour.
+    const minutes = Math.floor((seconds % 3600) / 60);
     return `Auto-cancels in ${String(hours)}h ${String(minutes)}m`;
   }
   if (seconds >= 60) {
@@ -129,7 +130,10 @@ export class ExtensionDialogCard extends LitElement {
           <h2 id="extension-dialog-heading">${dialog.title}</h2>
           ${countdown === undefined
             ? null
-            : html`<span class="header-status countdown" role="status" aria-live="polite" aria-atomic="true">${countdown}</span>`}
+            // Decorative only — no live region: a polite region would queue one
+            // announcement per second. The daemon-owned dialog.closed event is
+            // the real signal, and the settled card announces the outcome.
+            : html`<span class="header-status countdown">${countdown}</span>`}
         </header>
         ${this.renderOpenBody(dialog)}
       </article>

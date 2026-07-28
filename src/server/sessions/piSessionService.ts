@@ -1005,6 +1005,9 @@ export class PiSessionService implements SessionRouteService {
     this.clearUnreadPublicationRetry();
     clearInterval(this.heartbeat);
     this.clearCompactionDrainTimers();
+    // Same startup-park hazard as closeActive(): settle `session_start` dialogs
+    // of sessions still binding extensions before awaiting their pending opens.
+    for (const sessionId of this.startupSessions.keys()) this.endSessionExtensionDialogs(sessionId);
     const pendingOpens = this.pendingSessionOpenPromises();
     if (pendingOpens.length > 0) await Promise.allSettled(pendingOpens);
     const activeSessions = Array.from(new Set(this.active.values()));
@@ -2592,6 +2595,10 @@ export class PiSessionService implements SessionRouteService {
   }
 
   private async closeActive(sessionId: string, notificationPolicy: NotificationClosePolicy = CLEAR_RUNTIME_NOTIFICATIONS): Promise<void> {
+    // A session whose open is parked on a `session_start` dialog holds its
+    // pending open until the dialog settles; settle it first so closing cannot
+    // block behind the dialog timeout (which `0` makes infinite).
+    if (this.startupSessions.has(sessionId)) this.endSessionExtensionDialogs(sessionId);
     const pendingOpens = this.pendingSessionOpenPromises(sessionId);
     if (pendingOpens.length > 0) await Promise.allSettled(pendingOpens);
     const active = this.active.get(sessionId);

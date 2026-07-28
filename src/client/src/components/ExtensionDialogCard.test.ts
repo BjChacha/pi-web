@@ -141,13 +141,25 @@ describe("extension-dialog-card countdown", () => {
     vi.setSystemTime(new Date("2026-07-27T10:00:00.000Z"));
     const card = await mountOpenDialog(openDialog({ timeoutAt: "2026-07-27T10:01:30.000Z" }));
     const root = renderRoot(card);
-    const status = requiredElement(root.querySelector("[role='status']"), "countdown status");
+    const countdown = requiredElement(root.querySelector(".countdown"), "countdown");
 
-    expect(status.textContent).toBe("Auto-cancels in 1m 30s");
+    expect(countdown.textContent).toBe("Auto-cancels in 1m 30s");
 
     await vi.advanceTimersByTimeAsync(30_000);
     await card.updateComplete;
-    expect(status.textContent).toBe("Auto-cancels in 1m 0s");
+    expect(countdown.textContent).toBe("Auto-cancels in 1m 0s");
+  });
+
+  it("is decorative: no live region announcing every second", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-27T10:00:00.000Z"));
+    const card = await mountOpenDialog(openDialog({ timeoutAt: "2026-07-27T10:01:30.000Z" }));
+    const root = renderRoot(card);
+
+    // A ticking live region would queue a screen-reader announcement per
+    // second; the daemon-owned dialog.closed event is the real signal.
+    expect(requiredElement(root.querySelector(".countdown"), "countdown").getAttribute("role")).toBeNull();
+    expect(root.querySelector("[aria-live]")).toBeNull();
   });
 
   it("renders no countdown when the dialog waits forever", async () => {
@@ -155,7 +167,7 @@ describe("extension-dialog-card countdown", () => {
     const card = await mountOpenDialog(openDialog());
     const root = renderRoot(card);
 
-    expect(root.querySelector("[role='status']")).toBeNull();
+    expect(root.querySelector(".countdown")).toBeNull();
   });
 
   it("stops ticking once the dialog closes", async () => {
@@ -217,6 +229,11 @@ describe("extensionDialogCountdownText", () => {
     expect(extensionDialogCountdownText("2026-07-27T10:00:45.000Z", now)).toBe("Auto-cancels in 45s");
     expect(extensionDialogCountdownText("2026-07-27T10:05:00.000Z", now)).toBe("Auto-cancels in 5m 0s");
     expect(extensionDialogCountdownText("2026-07-27T11:02:00.000Z", now)).toBe("Auto-cancels in 1h 2m");
+  });
+
+  it("never rounds the minutes up to 60 near an hour boundary", () => {
+    expect(extensionDialogCountdownText("2026-07-27T11:59:55.000Z", now)).toBe("Auto-cancels in 1h 59m");
+    expect(extensionDialogCountdownText("2026-07-27T12:59:40.000Z", now)).toBe("Auto-cancels in 2h 59m");
   });
 
   it("stays display-only once the deadline has passed", () => {
