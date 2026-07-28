@@ -141,6 +141,8 @@ Rows with JSON key `—` are runtime-only environment variables, not config-file
 
 `PI_WEB_DATA_DIR` sets the root for PI WEB-managed runtime state and defaults to `~/.pi-web`. Unless a more specific path override is configured, PI WEB stores its project and machine registries, locally discovered plugins, default session-daemon socket, and session archives beneath this root.
 
+Changing `PI_WEB_DATA_DIR` only selects where state lives; it never moves or copies existing state. Each data directory is independent, so after pointing PI WEB at a new root it starts there with empty registries and no session archives. To carry session archives over, stop PI WEB, then copy `archived-sessions.json` and the `archived-sessions/` directory from the old data directory into the new one before starting it again.
+
 This setting does not change the PI WEB config file selected by `PI_WEB_CONFIG` or Pi-owned state such as the active session files selected by `PI_CODING_AGENT_SESSION_DIR`.
 
 ### External path access
