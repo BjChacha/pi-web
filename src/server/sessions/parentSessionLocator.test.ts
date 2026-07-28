@@ -1,10 +1,13 @@
+import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { countOutOfListingChildren, locateOutOfListingParents } from "./parentSessionLocator.js";
 import type { SessionHeaderSummary } from "./sessionFileHeader.js";
 
 const PARENT_PATH = "/sessions/--srv-other--/parent.jsonl";
 const LISTING_CWD = "/srv/dev/pi-web";
-const PARENT_CWD = "/srv/other-worktree";
+// Resolved because the locator canonicalizes header cwds: a bare "/srv/..." is
+// drive-relative on Windows and would land on the runner's current drive.
+const PARENT_CWD = resolve("/srv/other-worktree");
 
 describe("locateOutOfListingParents", () => {
   it("reports the cwd and id of a parent that is not in the listing", async () => {

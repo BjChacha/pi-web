@@ -694,9 +694,13 @@ describe("PiSessionService daemon-owned unread state", () => {
 
   it("clears unread for sessions archived and deleted by cleanup", async () => {
     const unreadStore = new SessionUnreadStore({ createCatalogId: () => "catalog-test" });
-    completeStoreWork(unreadStore, "cleanup-archive", "/old-project");
-    completeStoreWork(unreadStore, "cleanup-delete", "/old-project");
-    const archivedRecord = { sessionId: "cleanup-delete", cwd: "/old-project", archivedAt: "2026-04-01T00:00:00.000Z", archivePath: "/archive/cleanup-delete.jsonl" };
+    // Resolved because the service canonicalizes cwds before forgetting unread:
+    // a bare "/old-project" is drive-relative on Windows and would land on the
+    // runner's current drive, so the seeded marker would never match.
+    const oldProjectCwd = resolve("/old-project");
+    completeStoreWork(unreadStore, "cleanup-archive", oldProjectCwd);
+    completeStoreWork(unreadStore, "cleanup-delete", oldProjectCwd);
+    const archivedRecord = { sessionId: "cleanup-delete", cwd: oldProjectCwd, archivedAt: "2026-04-01T00:00:00.000Z", archivePath: "/archive/cleanup-delete.jsonl" };
     const service = new PiSessionService(new CapturingSessionEventHub(), {
       agentDir: TEST_AGENT_DIR,
       modelRuntime: testModelRuntime,
@@ -705,7 +709,7 @@ describe("PiSessionService daemon-owned unread state", () => {
       sessionManager: {
         create: () => fakeSessionManager(),
         list: () => Promise.resolve([]),
-        listAll: () => Promise.resolve([sessionRecord("cleanup-archive", "/old-project")]),
+        listAll: () => Promise.resolve([sessionRecord("cleanup-archive", oldProjectCwd)]),
         open: () => fakeSessionManager(),
       },
       archiveStore: {
