@@ -585,6 +585,7 @@ interface WorkspacePanelContext {
   state?: PluginRuntimeState;
   files: {
     readFile(path: string): Promise<FileContentResponse>;
+    listFiles(path: string): Promise<FileTreeResponse>;
     writeFile(path: string, content: string | Uint8Array, options?: WriteWorkspaceFileOptions): Promise<WriteWorkspaceFileResponse>;
     deleteFile(path: string): Promise<DeleteWorkspaceFileResponse>;
     moveFile(fromPath: string, toPath: string, options?: MoveWorkspaceFileOptions): Promise<MoveWorkspaceFileResponse>;
@@ -607,7 +608,7 @@ interface WorkspacePanelContext {
 
 `icon` is optional and is used in the compact mobile tab bar. Prefer an SVG rendered with the `svg` helper from `PluginActivationContext`; use `currentColor` so PI WEB themes can style it. If `icon` is omitted, mobile tabs fall back to initials from the panel title, or to the full title when initials collide.
 
-`machine`, `workspace`, `files`, `prompt`, `terminal`, and `host` are documented as stable for panel callbacks. The `files` helper supports `readFile`, `writeFile`, `deleteFile`, and `moveFile` — see [Reading workspace files](#reading-workspace-files) and [Writing workspace files](#writing-workspace-files). The `prompt` helper supports panel interactions that insert workspace context into the current prompt — see [Prompt editor API](#prompt-editor-api). Use `terminal.open()` to switch to the built-in terminal panel; pass `{ terminalId }` to deep-link to a specific terminal. Call `host.requestRender()` when async plugin-owned state changes should make PI WEB re-evaluate panel callbacks such as `badge`, `visible`, or `render`.
+`machine`, `workspace`, `files`, `prompt`, `terminal`, and `host` are documented as stable for panel callbacks. The `files` helper supports `readFile`, `listFiles`, `writeFile`, `deleteFile`, and `moveFile` — see [Reading workspace files](#reading-workspace-files), [Listing workspace files](#listing-workspace-files), and [Writing workspace files](#writing-workspace-files). The `prompt` helper supports panel interactions that insert workspace context into the current prompt — see [Prompt editor API](#prompt-editor-api). Use `terminal.open()` to switch to the built-in terminal panel; pass `{ terminalId }` to deep-link to a specific terminal. Call `host.requestRender()` when async plugin-owned state changes should make PI WEB re-evaluate panel callbacks such as `badge`, `visible`, or `render`.
 
 For compatibility, PI WEB still provides the old `context.openTerminal()` workspace-panel helper at runtime. It is deprecated, intentionally omitted from the public TypeScript declarations, and planned for removal in v2. Existing JavaScript plugins keep working, while typed plugins should migrate to `context.terminal.open()`.
 
@@ -675,6 +676,7 @@ interface WorkspaceLabelContext {
   state?: PluginRuntimeState;
   files: {
     readFile(path: string): Promise<FileContentResponse>;
+    listFiles(path: string): Promise<FileTreeResponse>;
     writeFile(path: string, content: string | Uint8Array, options?: WriteWorkspaceFileOptions): Promise<WriteWorkspaceFileResponse>;
     deleteFile(path: string): Promise<DeleteWorkspaceFileResponse>;
     moveFile(fromPath: string, toPath: string, options?: MoveWorkspaceFileOptions): Promise<MoveWorkspaceFileResponse>;
@@ -685,7 +687,7 @@ interface WorkspaceLabelContext {
 }
 ```
 
-`machine`, `workspace`, `files`, and `host` are documented as stable for label callbacks. The `files` helper supports `readFile`, `writeFile`, `deleteFile`, and `moveFile` — see [Reading workspace files](#reading-workspace-files) and [Writing workspace files](#writing-workspace-files). Include `machine.id` in any label caches that depend on workspace data. Call `host.requestRender()` when async plugin-owned state changes should make PI WEB re-evaluate label `visible` or `items` callbacks.
+`machine`, `workspace`, `files`, and `host` are documented as stable for label callbacks. The `files` helper supports `readFile`, `listFiles`, `writeFile`, `deleteFile`, and `moveFile` — see [Reading workspace files](#reading-workspace-files), [Listing workspace files](#listing-workspace-files), and [Writing workspace files](#writing-workspace-files). Include `machine.id` in any label caches that depend on workspace data. Call `host.requestRender()` when async plugin-owned state changes should make PI WEB re-evaluate label `visible` or `items` callbacks.
 
 Items are sorted by `order` and then id. Return an empty array to render nothing. Keep callbacks synchronous and lightweight; start async work from the callback, return cached items, then call `host.requestRender()` when the cache changes.
 
@@ -823,6 +825,32 @@ workspaceLabels: [
 ```
 
 The file response includes fields such as `path`, `content`, `truncated`, and `binary`. Be careful with sensitive files such as `.env`: plugins are trusted browser code, and file contents are exposed to the plugin.
+
+## Listing workspace files
+
+`files.listFiles(path)` lists the entries of a workspace directory. Pass `""` for the workspace root. Like `readFile`, PI WEB binds the call to the callback's machine and workspace, so it works the same for local and federated machines.
+
+```js
+const listing = await context.files.listFiles("src");
+for (const entry of listing.entries) {
+  // entry: { name, path, type: "file" | "directory" | "symlink", size?, modifiedAt? }
+}
+```
+
+The listing response includes `path`, `entries`, `scannedAt`, and `truncated`. When `truncated` is true, the server cut the listing short, so treat the entries as partial.
+
+`listFiles` rejects when the directory does not exist or cannot be read, matching `readFile` error behavior. When a directory is optional, catch the error and treat it as an empty listing:
+
+```js
+async function listSubdirectoryNames(context, path) {
+  try {
+    const listing = await context.files.listFiles(path);
+    return listing.entries.filter((entry) => entry.type === "directory").map((entry) => entry.name);
+  } catch {
+    return [];
+  }
+}
+```
 
 ## Writing, deleting, and moving workspace files
 

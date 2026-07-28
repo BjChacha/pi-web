@@ -37,6 +37,7 @@ import { corePlugin } from "../plugins/core";
 import { themePackPlugin } from "../plugins/themes";
 import { loadExternalPlugins } from "../plugins/external";
 import { PluginRegistry, installPluginRuntimeScope, installWorkspacePanelScope } from "../plugins/registry";
+import { createWorkspaceFiles as createPluginWorkspaceFiles } from "../plugins/workspaceFiles";
 import { queryNamespace, readNamespacedString, setNamespacedQueryKey } from "../namespacedQueryArgs";
 import { AppShellController } from "../appShell/appShellController";
 import { BrowserResumeController } from "../appShell/browserResumeController";
@@ -1596,24 +1597,7 @@ export class PiWebApp extends LitElement {
   }
 
   private createWorkspaceFiles(workspace: Workspace, machineId: string): WorkspaceFiles {
-    return {
-      readFile: (path: string) => workspacesApi.workspaceFile(workspace.projectId, workspace.id, path, machineId),
-      writeFile: async (path, content, options) => {
-        const result = await workspacesApi.writeWorkspaceFile(workspace.projectId, workspace.id, path, content, options, machineId);
-        void this.files.refreshFiles();
-        return result;
-      },
-      deleteFile: async (path) => {
-        const result = await workspacesApi.deleteWorkspaceFile(workspace.projectId, workspace.id, path, machineId);
-        void this.files.refreshFiles();
-        return result;
-      },
-      moveFile: async (fromPath, toPath, options) => {
-        const result = await workspacesApi.moveWorkspaceFile(workspace.projectId, workspace.id, fromPath, toPath, options, machineId);
-        void this.files.refreshFiles();
-        return result;
-      },
-    };
+    return createPluginWorkspaceFiles(workspacesApi, workspace, machineId, () => { void this.files.refreshFiles(); });
   }
 
   private createWorkspaceHost(): WorkspaceHost {
