@@ -1,13 +1,16 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { PiSessionService, type PiSessionListEntry } from "./piSessionService.js";
 import { CapturingSessionEventHub, emptyArchiveStore, fakeSessionManager, sessionRecord, testModelRuntime, type SessionGateway } from "./piSessionService.testSupport.js";
 
 const TEST_AGENT_DIR = "/tmp/pi-web-test-agent";
 const CHILD_CWD = "/srv/dev/pi-web";
-const PARENT_CWD = "/srv/dev/pi-web-feature";
+// Resolved because the service canonicalizes header cwds before annotating: a
+// bare "/srv/..." is drive-relative on Windows and would land on the runner's
+// current drive.
+const PARENT_CWD = resolve("/srv/dev/pi-web-feature");
 
 let tempDir: string;
 
