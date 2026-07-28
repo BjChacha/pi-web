@@ -280,6 +280,25 @@ Task fields:
 
 Review task configs before running them, especially in shared projects. Workspace Tasks runs trusted shell commands from your repositories.
 
+### Relays
+
+**Plugin id:** `relays`
+**What it does:** adds a read-only **Relays** workspace tab for browsing the workspace's relays, plus an **Open Workspace Relays** action for the selected workspace that opens the same tab.
+
+A relay is a directory of markdown notes under `.pi-web/relays/<name>/` in the workspace root — the convention used by the Relay method for chaining agent sessions. The tab lists each relay's documents with `status.md`, `charter.md`, and `log.md` first (in that order), followed by any other files alphabetically, and opens `status.md` by default. Markdown documents render as sanitized HTML; other files render as preformatted text, and binary files have no preview. Truncated documents show a notice, and **Refresh** re-scans the workspace and reloads the open document.
+
+With several relays, a picker pre-selects the most recently modified one; a single relay opens directly. A workspace without `.pi-web/relays/` shows an empty state explaining the convention. The tab never creates, edits, or deletes relay files.
+
+Relays is enabled by default. To hide it, disable `relays` in **Settings → PI WEB plugins** or set:
+
+```json
+{
+  "plugins": {
+    "relays": { "enabled": false }
+  }
+}
+```
+
 ## Discovery and packaging
 
 PI WEB builds the gateway `/pi-web-plugins/manifest.json` from these sources:
