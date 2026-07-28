@@ -831,6 +831,10 @@
                 and its unanswered questions to the model, and turns the earlier card into a read-only transcript record.
                 Submitted and cancelled asks likewise remain readable in the transcript.
               </p>
+              <p>
+                Sending an ordinary chat message while a form is open voids the form: the card closes as cancelled and
+                the model is told its questions went unanswered as part of the turn the message itself starts.
+              </p>
               <div class="callout warning">
                 <strong>Restart required:</strong> restart the session daemon after changing <code>askUser</code> or after
                 upgrading PI WEB to a version that introduces this tool. For the systemd user service, run

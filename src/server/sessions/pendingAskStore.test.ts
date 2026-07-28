@@ -271,6 +271,17 @@ describe("PendingAskStore close transitions", () => {
     expect(store.pendingAsk(sessionId)).toBeUndefined();
   });
 
+  it("cancels whatever ask is open without naming its id", () => {
+    const store = testStore();
+    openTwoQuestions(store);
+
+    const outcome = store.cancelOpen(sessionId);
+
+    expect(outcome).toMatchObject({ askId: "ask-1", reason: "cancelled", answeredCount: 0, unansweredIds: ["q1", "q2"] });
+    expect(store.pendingAsk(sessionId)).toBeUndefined();
+    expect(store.cancelOpen(sessionId)).toBeUndefined();
+  });
+
   it("forgets the open ask of a session that goes away without reporting an outcome", () => {
     const store = testStore();
     const { ask } = openTwoQuestions(store);

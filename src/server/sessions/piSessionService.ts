@@ -1253,6 +1253,23 @@ export class PiSessionService implements SessionRouteService {
   }
 
   /**
+   * Void the session's open ask because the user sent a chat message instead of
+   * answering it. Every browser closes the card as cancelled, and the model is
+   * told — without being woken — so the notice rides into the turn the message
+   * itself triggers rather than becoming a turn of its own.
+   */
+  private async voidOpenAskForUserMessage(session: PiAgentSession): Promise<void> {
+    const outcome = this.pendingAskStore.cancelOpen(session.sessionId);
+    if (outcome === undefined) return;
+    this.publishAskClosed(session.sessionId, outcome);
+    await this.runSessionEntryMutation(session, "void the open questions", () => session.sendCustomMessage(
+      { customType: ASK_USER_ANSWERS_CUSTOM_TYPE, content: renderAskUserAnswersText(outcome), display: true, details: outcome },
+      { triggerTurn: false, deliverAs: "followUp" },
+    ));
+    this.publishStatus(session);
+  }
+
+  /**
    * Publish status for a session known only by id, as the ask tools are: they
    * run inside the session's own runtime, so the active entry is the session.
    */
@@ -1741,6 +1758,11 @@ export class PiSessionService implements SessionRouteService {
       this.publishStatus(session);
       return;
     }
+    // A chat message answers the session's open ask in the user's own words, so
+    // the form is void: keeping it open would invite answers to questions the
+    // conversation has already moved past. Ignored duplicates skip this on
+    // purpose: they must not void an ask posted after the queued original.
+    await this.voidOpenAskForUserMessage(session);
     if (session.isCompacting) {
       this.enqueuePromptDuringCompaction(session, promptText, behavior ?? "followUp", images, echoUserMessage);
       return;

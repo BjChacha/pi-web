@@ -233,6 +233,39 @@ describe("PiSessionService.submitAsk", () => {
   });
 });
 
+describe("PiSessionService.prompt with an open ask", () => {
+  it("voids the open ask and tells the model without waking it, then sends the message", async () => {
+    const { service, store, events, fake } = askService({ withActiveSession: true });
+    await service.openAsk({ sessionId: ACTIVE_SESSION_ID, questions });
+
+    await service.prompt(sessionRef(ACTIVE_SESSION_ID), "Use DuckDB");
+
+    expect(store.pendingAsk(ACTIVE_SESSION_ID)).toBeUndefined();
+    expect(askEvents(events).map(({ event }) => event)).toEqual([
+      { type: "ask.opened", ask: { askId: "ask-1", askedAt: "2026-02-01T10:00:00.000Z", questions } },
+      { type: "ask.closed", askId: "ask-1", reason: "cancelled" },
+    ]);
+    const [delivered] = fake.calls.sendCustomMessage;
+    expect(delivered?.message.customType).toBe(ASK_USER_ANSWERS_CUSTOM_TYPE);
+    expect(delivered?.message.content).toContain("closed (cancelled) before it was fully answered");
+    expect(delivered?.message.content).toContain("unanswered: db");
+    expect(delivered?.options).toEqual({ triggerTurn: false, deliverAs: "followUp" });
+    expect(fake.calls.prompt.map((call) => call.text)).toEqual(["Use DuckDB"]);
+    await service.dispose();
+  });
+
+  it("sends a plain message untouched when no ask is open", async () => {
+    const { service, events, fake } = askService({ withActiveSession: true });
+
+    await service.prompt(sessionRef(ACTIVE_SESSION_ID), "hello");
+
+    expect(fake.calls.sendCustomMessage).toEqual([]);
+    expect(fake.calls.prompt.map((call) => call.text)).toEqual(["hello"]);
+    expect(askEvents(events)).toEqual([]);
+    await service.dispose();
+  });
+});
+
 describe("PiSessionService.cancelAsk", () => {
   it("tells the model every question went unanswered rather than leaving it waiting", async () => {
     const { service, store, events, fake } = askService({ withActiveSession: true });

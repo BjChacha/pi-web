@@ -285,6 +285,8 @@ Calling `ask_user` posts the whole set as one browser form and ends the current 
 
 PI WEB confirms a partial submission before sending it and names the unanswered questions. Only one ask can be open per session: a later `ask_user` call supersedes the earlier one, reports that fact and its unanswered questions to the model, and turns the earlier card into a read-only transcript record. Submitted and cancelled asks likewise remain readable in the transcript.
 
+Sending an ordinary chat message while a form is open voids the form: the card closes as cancelled and the model is told its questions went unanswered as part of the turn the message itself starts.
+
 Restart the session daemon after changing `askUser` or after upgrading PI WEB to a version that introduces this tool. For the systemd user service, run `systemctl --user restart pi-web-sessiond`.
 
 ### Plugin config
