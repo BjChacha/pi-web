@@ -656,9 +656,9 @@ export interface PendingExtensionDialog {
 
 /**
  * The complete result of a closed extension dialog. Unlike an ask outcome it
- * stays small — the dialog itself is not embedded, because a closed dialog
- * renders only transiently for browsers that saw it open; reloads rehydrate
- * open dialogs from {@link SessionStatus.pendingDialogs} alone.
+ * stays small — the dialog itself is not embedded, because a settled card is a
+ * browser-local record that stays until the user dismisses it; reloads
+ * rehydrate open dialogs from {@link SessionStatus.pendingDialogs} alone.
  */
 export interface ExtensionDialogOutcome {
   dialogId: string;

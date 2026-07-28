@@ -76,7 +76,8 @@ export function extensionDialogCountdownText(timeoutAt: string | undefined, nowM
  * The card owns only browser-local form state (the half-typed input, the
  * in-flight close flag, the display-only countdown); the daemon remains the
  * source of truth for whether the dialog is open. Closed mode renders the
- * transient outcome for a browser that saw the dialog open.
+ * settled outcome — a browser-local record that stays until dismissed — for a
+ * browser that saw the dialog open.
  */
 @customElement("extension-dialog-card")
 export class ExtensionDialogCard extends LitElement {

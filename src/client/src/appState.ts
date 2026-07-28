@@ -46,9 +46,10 @@ export interface AppState {
   pendingDialogs: PendingExtensionDialog[];
   /**
    * Dialogs that closed while their session was selected, kept with the close
-   * reason and any answer so the card can render its outcome briefly. The wire
-   * outcome is deliberately small, so only a browser that saw the dialog open
-   * can show the closed card; deselection and reloads drop these.
+   * reason and any answer so the settled card can show what became of the
+   * dialog. The card stays until the user dismisses it. The wire outcome is
+   * deliberately small, so only a browser that saw the dialog open can show
+   * the closed card; deselection and reloads drop these.
    */
   closedDialogs: ClosedExtensionDialog[];
   /** Thinking levels available for the selected session's current model. */
