@@ -1379,10 +1379,13 @@ export class PiSessionService implements SessionRouteService {
   }
 
   /**
-   * Settle the session's run-scoped dialogs as `"aborted"` when its run ends.
-   * Covers user-abort mid-dialog and run crashes; idle-opened dialogs (a
-   * `session_start` probe, say) are not run-scoped and survive, because their
-   * waiter is still alive after `agent_end`.
+   * Settle the session's run-scoped dialogs as `"aborted"`. Runs at
+   * abort-request time (a user abort parks the agent loop behind the dialog
+   * handler, so `agent_end` would never arrive on its own) and again from
+   * the `agent_end` observer as the run-crash backstop — the store makes the
+   * second settlement a stale no-op. Idle-opened dialogs (a `session_start`
+   * probe, say) are not run-scoped and survive, because their waiter
+   * outlives the run.
    */
   private abortRunScopedExtensionDialogs(sessionId: string): void {
     let closedAny = false;
@@ -2361,6 +2364,12 @@ export class PiSessionService implements SessionRouteService {
     const sessionId = active.runtime.session.sessionId;
     this.clearCompactionPromptQueue(sessionId);
     clearSessionQueue(active.runtime.session);
+    // Settle run-scoped dialogs now, at abort-request time: pi's agent loop
+    // waits for a parked `tool_call` dialog handler before it can emit
+    // `agent_end`, so leaving settlement to the `agent_end` observer would
+    // strand the dialog until its timeout. Settling before the runtime abort
+    // also means a failing or hung abort cannot strand the parked waiter.
+    this.abortRunScopedExtensionDialogs(sessionId);
     try {
       await this.abortSessionOperations(active.runtime.session);
       this.publishActivity(active.runtime.session, "stopped", "idle");
