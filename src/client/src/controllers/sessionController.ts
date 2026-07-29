@@ -1,5 +1,5 @@
-import { api as defaultApi, type AskUserCloseResponse, type AskUserSubmission, type CommandResult, type PendingAskUser, type PromptAttachment, type QueuedSessionMessage, type SessionActivity, type SessionBulkFailure, type SessionCleanupExecuteResponse, type SessionInfo, type SessionRef, type SessionStatus, type SessionStreamSnapshot, type SessionTreeNavigateResult, type SessionTreeSummaryChoice, type Workspace } from "../api";
-import type { AppState } from "../appState";
+import { api as defaultApi, type AskUserCloseResponse, type AskUserSubmission, type CommandResult, type ExtensionDialogAnswer, type ExtensionDialogCloseReason, type ExtensionDialogCloseResponse, type ExtensionDialogOutcome, type PendingAskUser, type PendingExtensionDialog, type PromptAttachment, type QueuedSessionMessage, type SessionActivity, type SessionBulkFailure, type SessionCleanupExecuteResponse, type SessionInfo, type SessionRef, type SessionStatus, type SessionStreamSnapshot, type SessionTreeNavigateResult, type SessionTreeSummaryChoice, type Workspace } from "../api";
+import type { AppState, ClosedExtensionDialog } from "../appState";
 import { forgetCachedNewSession, isCachedNewSessionInfo, markCachedNewSessionInfo, mergeCachedNewSessions, rememberCachedNewSession, stripCachedNewSessionMarker } from "../cachedNewSessions";
 import { textMessage } from "../chatMessages";
 import { machineSessionKey } from "../machineKeys";
@@ -84,6 +84,13 @@ interface PendingSessionStart {
   session: ClientPendingStartSessionInfo;
   queuedSends: QueuedPendingSessionSend[];
   discarded: boolean;
+  /**
+   * The real session id, learned from the daemon's `session.startup` events
+   * long before the create request resolves. It is what lets the startup view
+   * subscribe to the constructing session and answer its `session_start`
+   * dialogs — the dialogs that gate the readiness the create request waits on.
+   */
+  backendSessionId?: string;
 }
 
 interface SuppressedCreatedSession {
@@ -162,7 +169,7 @@ export class SessionController {
     // session must not cancel the in-flight upload indicator of the session
     // that is still sending; the per-session entry is cleared by send()'s
     // finally block when the request settles.
-    this.setState({ selectedSession: undefined, messages: [], messagePageStart: 0, messagePageEnd: 0, messagePageTotal: 0, isLoadingEarlierMessages: false, status: undefined, activity: undefined, pendingAsk: undefined, availableThinkingLevels: [], treeDialog: undefined });
+    this.setState({ selectedSession: undefined, messages: [], messagePageStart: 0, messagePageEnd: 0, messagePageTotal: 0, isLoadingEarlierMessages: false, status: undefined, activity: undefined, pendingAsk: undefined, pendingDialogs: [], closedDialogs: [], availableThinkingLevels: [], treeDialog: undefined });
   }
 
   deselectSession(options?: { forgetRememberedSelection?: boolean | undefined; updateUrl?: boolean | undefined }) {
@@ -221,6 +228,8 @@ export class SessionController {
       status: session.archived === true ? undefined : this.getState().sessionStatuses[session.id],
       activity: session.archived === true ? undefined : this.getState().sessionActivities[session.id],
       pendingAsk: session.archived === true ? undefined : this.selectedPendingAsk(this.getState().sessionStatuses[session.id], machineId),
+      pendingDialogs: session.archived === true ? [] : (this.getState().sessionStatuses[session.id]?.pendingDialogs ?? []),
+      closedDialogs: [],
       availableThinkingLevels: [],
     });
     let buffered: SessionUiEvent[] | undefined;
@@ -229,7 +238,7 @@ export class SessionController {
         const page = await this.api.messages(session, { limit: MESSAGE_PAGE_SIZE }, selectedMachineId(this.getState()));
         if (seq !== this.selectionSeq || this.getState().selectedSession?.id !== session.id) return;
         const history = this.transcripts.mergeHistory(transcriptKey, page);
-        this.setState({ ...history, isLoadingEarlierMessages: false, status: undefined, activity: undefined, pendingAsk: undefined });
+        this.setState({ ...history, isLoadingEarlierMessages: false, status: undefined, activity: undefined, pendingAsk: undefined, pendingDialogs: [], closedDialogs: [] });
         this.onSelectedSessionReady?.({ machineId, session });
         if (options?.updateUrl !== false) this.updateUrl();
         return;
@@ -666,7 +675,7 @@ export class SessionController {
         sessions: nextSessions,
         sessionStatuses: omitKeys(state.sessionStatuses, affectedIds),
         sessionActivities: omitKeys(state.sessionActivities, affectedIds),
-        ...(selectedAffected ? { status: undefined, activity: undefined, pendingAsk: undefined } : {}),
+        ...(selectedAffected ? { status: undefined, activity: undefined, pendingAsk: undefined, pendingDialogs: [], closedDialogs: [] } : {}),
       });
 
       if (state.selectedSession !== undefined && deletedIdSet.has(state.selectedSession.id)) {
@@ -897,6 +906,75 @@ export class SessionController {
     return this.closeOpenAsk(askId, (session, machineId) => this.api.cancelAsk(session, askId, machineId));
   }
 
+  /** Send the value the user gave for one of the session's open extension dialogs. */
+  answerDialog(dialogId: string, value: ExtensionDialogAnswer): Promise<void> {
+    return this.closeOpenDialog(dialogId, (session, machineId) => this.api.answerDialog(session, dialogId, value, machineId));
+  }
+
+  /** Close one of the session's open extension dialogs without answering it. */
+  cancelDialog(dialogId: string): Promise<void> {
+    return this.closeOpenDialog(dialogId, (session, machineId) => this.api.cancelDialog(session, dialogId, machineId));
+  }
+
+  private async closeOpenDialog(dialogId: string, close: (session: SessionInfo, machineId: string) => Promise<ExtensionDialogCloseResponse>): Promise<void> {
+    const state = this.getState();
+    const session = state.selectedSession;
+    if (session === undefined || session.archived === true) return;
+    if (isClientPendingStartSessionInfo(session)) {
+      await this.closePendingStartDialog(session, dialogId, close);
+      return;
+    }
+    const machineId = selectedMachineId(state);
+    const selectionSeq = this.selectionSeq;
+    try {
+      const response = await close(session, machineId);
+      if (!this.isCurrentSessionSelection(session.id, machineId, selectionSeq)) return;
+      // When this call closed the dialog, its outcome is recorded right away so
+      // the card shows what the user gave; the daemon's dialog.closed event
+      // then finds the dialog already closed here and stays a no-op.
+      const outcome: ExtensionDialogOutcome | undefined = response.outcome;
+      if (outcome !== undefined) {
+        const dialog = this.getState().pendingDialogs.find((pending) => pending.dialogId === outcome.dialogId);
+        if (dialog !== undefined) this.recordClosedDialog({ dialog, reason: outcome.reason, ...(outcome.answer === undefined ? {} : { answer: outcome.answer }) });
+      }
+      // Both outcomes carry the recomputed status, so no follow-up status
+      // request is needed to learn what the session's open dialogs are now.
+      this.applyStatus(response.sessionStatus);
+    } catch (error) {
+      if (this.isCurrentSessionSelection(session.id, machineId, selectionSeq)) this.setState({ error: String(error) });
+    }
+  }
+
+  /**
+   * Answer or cancel a `session_start` dialog from the startup view. The row
+   * is still the pending start, but the dialog belongs to the constructing
+   * backend session the startup events named, so the close goes out under the
+   * real id — the only route the daemon can serve before readiness.
+   */
+  private async closePendingStartDialog(session: ClientPendingStartSessionInfo, dialogId: string, close: (session: SessionInfo, machineId: string) => Promise<ExtensionDialogCloseResponse>): Promise<void> {
+    const pending = this.pendingSessionStarts.get(session.id);
+    const backendSessionId = pending?.backendSessionId;
+    // Without the real id there is no route to answer through — and no way a
+    // dialog card could be on screen yet either.
+    if (pending === undefined || backendSessionId === undefined) return;
+    const selectionSeq = this.selectionSeq;
+    try {
+      const response = await close({ ...session, id: backendSessionId }, pending.machineId);
+      if (selectionSeq !== this.selectionSeq || this.getState().selectedSession?.id !== session.id) return;
+      // Same outcome-first ordering as the ready-session path: the card shows
+      // what the user gave, and the daemon's dialog.closed frame then finds
+      // the dialog already closed here and stays a no-op.
+      const outcome: ExtensionDialogOutcome | undefined = response.outcome;
+      if (outcome !== undefined) {
+        const dialog = this.getState().pendingDialogs.find((candidate) => candidate.dialogId === outcome.dialogId);
+        if (dialog !== undefined) this.recordClosedDialog({ dialog, reason: outcome.reason, ...(outcome.answer === undefined ? {} : { answer: outcome.answer }) });
+      }
+      this.applyPendingStartStatus(pending, response.sessionStatus);
+    } catch (error) {
+      if (selectionSeq === this.selectionSeq && this.getState().selectedSession?.id === session.id) this.setState({ error: String(error) });
+    }
+  }
+
   private async closeOpenAsk(askId: string, close: (session: SessionInfo, machineId: string) => Promise<AskUserCloseResponse>): Promise<void> {
     const state = this.getState();
     const session = state.selectedSession;
@@ -1076,11 +1154,16 @@ export class SessionController {
       status: undefined,
       activity,
       pendingAsk: undefined,
+      pendingDialogs: [],
+      closedDialogs: [],
       availableThinkingLevels: [],
       treeDialog: undefined,
       ...(activity === undefined ? {} : { sessionActivities: { ...state.sessionActivities, [session.id]: activity } }),
       error: "",
     });
+    // Re-selecting the row mid-startup re-establishes the constructing
+    // session's subscription; the close above dropped it with the old selection.
+    if (pendingStart?.backendSessionId !== undefined) this.connectPendingStartSocket(pendingStart);
     if (options?.updateUrl !== false) this.updateUrl();
   }
 
@@ -1116,7 +1199,7 @@ export class SessionController {
       sessionActivities: omitSessionActivity(state.sessionActivities, tempId),
       sendingPrompts: moveRecordKey(state.sendingPrompts, tempId, cachedSession.id),
       clientQueuedSessionMessages: moveRecordKey(state.clientQueuedSessionMessages, tempId, cachedSession.id),
-      ...(wasSelected ? { selectedSession: cachedSession, status: state.sessionStatuses[cachedSession.id], activity: state.sessionActivities[cachedSession.id], pendingAsk: this.selectedPendingAsk(state.sessionStatuses[cachedSession.id], pending.machineId) } : {}),
+      ...(wasSelected ? { selectedSession: cachedSession, status: state.sessionStatuses[cachedSession.id], activity: state.sessionActivities[cachedSession.id], pendingAsk: this.selectedPendingAsk(state.sessionStatuses[cachedSession.id], pending.machineId), pendingDialogs: state.sessionStatuses[cachedSession.id]?.pendingDialogs ?? [], closedDialogs: [] } : {}),
       error: "",
     });
     this.applyReleasedCreatedSessions(releasedCreatedSessions, pending.machineId);
@@ -1131,9 +1214,15 @@ export class SessionController {
     const pending = this.pendingSessionStarts.get(tempId);
     if (pending === undefined) return;
     this.pendingSessionStarts.delete(tempId);
+    const wasDiscarded = pending.discarded;
+    // The pending start is dead: stop routing its dialog frames (a card on the
+    // failed row could never be answered) and drop the early-subscribed socket
+    // so it stops reconnecting against a session that may not exist.
+    pending.discarded = true;
+    if (this.getState().selectedSession?.id === tempId) this.socket.close();
     const releasedCreatedSessions = this.takeSuppressedCreatedSessionsFor(pending.cwd, pending.machineId);
     const isCurrentPendingStart = this.isCurrentPendingStart(pending);
-    if (pending.discarded || !isCurrentPendingStart) {
+    if (wasDiscarded || !isCurrentPendingStart) {
       if (isCurrentPendingStart) this.applyReleasedCreatedSessions(releasedCreatedSessions, pending.machineId);
       return;
     }
@@ -1145,6 +1234,9 @@ export class SessionController {
       sessions: hasPendingRow ? state.sessions : [pending.session, ...state.sessions],
       sessionActivities: { ...state.sessionActivities, [tempId]: activity },
       activity: state.selectedSession?.id === tempId ? activity : state.activity,
+      // Open cards on the failed row are dead: the create is gone, so no
+      // answer could ever reach the daemon. Settled outcomes stay as history.
+      ...(state.selectedSession?.id === tempId ? { pendingDialogs: [] } : {}),
       error: `Failed to start session: ${message}`,
     });
     this.applyReleasedCreatedSessions(releasedCreatedSessions, pending.machineId);
@@ -1274,7 +1366,46 @@ export class SessionController {
       // The daemon owns whether an ask is open, so every status it publishes is
       // authoritative for the selected session's card, including its removal.
       ...(isSelected ? { pendingAsk: this.selectedPendingAsk(status, selectedMachineId(state)) } : {}),
+      // Same for extension dialogs: the status projection is authoritative for
+      // the open list. Closed-card outcomes are event/response-driven instead,
+      // so a status without the dialog simply drops it from the open list.
+      ...(isSelected ? { pendingDialogs: status.pendingDialogs ?? [] } : {}),
     });
+  }
+
+  private applyOpenedDialog(dialog: PendingExtensionDialog): void {
+    const state = this.getState();
+    if (state.selectedSession === undefined) return;
+    // Events apply exactly once, so an id already on screen means this frame
+    // was already reflected (e.g. a rehydrated open) and must not duplicate
+    // the card.
+    if (state.pendingDialogs.some((pending) => pending.dialogId === dialog.dialogId)) return;
+    this.setState({ pendingDialogs: [...state.pendingDialogs, dialog] });
+  }
+
+  private applyClosedDialog(dialogId: string, reason: ExtensionDialogCloseReason, answer: ExtensionDialogAnswer | undefined): void {
+    // A close for a dialog that is not on screen is already reflected here
+    // (e.g. the answering browser's own response landed first), so it must not
+    // clear or duplicate other cards.
+    const dialog = this.getState().pendingDialogs.find((pending) => pending.dialogId === dialogId);
+    if (dialog === undefined) return;
+    this.recordClosedDialog({ dialog, reason, ...(answer === undefined ? {} : { answer }) });
+  }
+
+  private recordClosedDialog(closed: ClosedExtensionDialog): void {
+    const state = this.getState();
+    if (state.closedDialogs.some((entry) => entry.dialog.dialogId === closed.dialog.dialogId)) return;
+    this.setState({
+      pendingDialogs: state.pendingDialogs.filter((pending) => pending.dialogId !== closed.dialog.dialogId),
+      closedDialogs: [...state.closedDialogs, closed],
+    });
+  }
+
+  /** Drop a closed dialog's transient outcome card (e.g. the user dismissed it). */
+  dismissClosedDialog(dialogId: string): void {
+    const state = this.getState();
+    if (!state.closedDialogs.some((entry) => entry.dialog.dialogId === dialogId)) return;
+    this.setState({ closedDialogs: state.closedDialogs.filter((entry) => entry.dialog.dialogId !== dialogId) });
   }
 
   private applyOpenedAsk(ask: PendingAskUser): void {
@@ -1368,6 +1499,14 @@ export class SessionController {
       this.applyClosedAsk(event.askId);
       return;
     }
+    if (event.type === "dialog.opened") {
+      this.applyOpenedDialog(event.dialog);
+      return;
+    }
+    if (event.type === "dialog.closed") {
+      this.applyClosedDialog(event.dialogId, event.reason, event.answer);
+      return;
+    }
     const transcript = this.transcripts.applyLiveEvent(this.getState().messages, event);
     if (transcript) {
       this.setState({ messages: transcript });
@@ -1406,12 +1545,105 @@ export class SessionController {
     }
     const pending = event.startupToken === undefined ? undefined : this.pendingSessionStarts.get(event.startupToken);
     if (pending === undefined || pending.discarded) return;
+    this.learnPendingStartBackendSession(pending, event.activity.sessionId);
     // An idle startup phase means the daemon has nothing left to attribute, so
     // restore this row's own generic wording rather than clearing the text of a
     // creation request that has not returned yet.
     this.queueActivityUpdate(event.activity.phase === "idle"
       ? creatingPendingSessionActivity(pending.tempId, pending.queuedSends.length)
       : pendingStartActivity(event.activity, pending.tempId));
+  }
+
+  private learnPendingStartBackendSession(pending: PendingSessionStart, sessionId: string): void {
+    if (sessionId === "" || pending.backendSessionId !== undefined) return;
+    pending.backendSessionId = sessionId;
+    if (this.getState().selectedSession?.id === pending.tempId) this.connectPendingStartSocket(pending);
+  }
+
+  /**
+   * Subscribe the selected pending-start row to its constructing session.
+   * `session_start` dialogs park the create request until answered, so waiting
+   * for readiness to subscribe would make them unanswerable; the per-session
+   * event channel and (on this daemon version) the status route both serve a
+   * session whose startup is still waiting on the user.
+   */
+  private connectPendingStartSocket(pending: PendingSessionStart): void {
+    const backendSessionId = pending.backendSessionId;
+    if (backendSessionId === undefined || pending.discarded) return;
+    const ref: SessionRef = { id: backendSessionId, cwd: pending.cwd };
+    this.socket.connect(
+      ref,
+      (event) => { this.applyPendingStartEvent(pending, event); },
+      () => { this.resyncPendingStartDialogs(pending); },
+      pending.machineId,
+    );
+    this.resyncPendingStartDialogs(pending);
+  }
+
+  /**
+   * Recover dialogs that opened before this subscription connected (or during
+   * a reconnect gap) from the daemon's status projection. The HTTP snapshot is
+   * unordered against socket frames — dialogs the socket already opened or
+   * closed are newer than anything it can say about them — so only genuinely
+   * unknown opens are adopted, never a wholesale replace. A daemon that
+   * predates mid-startup status answers 404 until readiness: tolerated, since
+   * everything that opens from here still arrives as an event.
+   */
+  private resyncPendingStartDialogs(pending: PendingSessionStart): void {
+    const backendSessionId = pending.backendSessionId;
+    if (backendSessionId === undefined) return;
+    void this.api.status({ id: backendSessionId, cwd: pending.cwd }, pending.machineId).then(
+      (status) => {
+        // Guard before applying: this unordered snapshot can land after the
+        // readiness swap made the real session selected, and a stale replace
+        // must not clobber the socket's fresher dialog state.
+        if (pending.discarded || this.getState().selectedSession?.id !== pending.tempId) return;
+        this.applyStatus(status);
+        const state = this.getState();
+        const knownIds = new Set<string>([
+          ...state.pendingDialogs.map((pendingDialog) => pendingDialog.dialogId),
+          ...state.closedDialogs.map((closed) => closed.dialog.dialogId),
+        ]);
+        const recovered = (status.pendingDialogs ?? []).filter((recoveredDialog) => !knownIds.has(recoveredDialog.dialogId));
+        if (recovered.length > 0) this.setState({ pendingDialogs: [...state.pendingDialogs, ...recovered] });
+      },
+      () => undefined,
+    );
+  }
+
+  /**
+   * Route a constructing session's events onto its pending-start row. Only
+   * dialog frames and their status reconciliation apply here: everything else
+   * (transcript, activity, naming) is re-fetched authoritatively by the
+   * readiness join, and routing it onto a temporary row would pollute state
+   * keyed for a session that does not exist yet. Frames that arrive after the
+   * row stopped being the selected pending start belong to the selection flow
+   * that took over.
+   */
+  private applyPendingStartEvent(pending: PendingSessionStart, event: SessionUiEvent): void {
+    if (pending.discarded || this.getState().selectedSession?.id !== pending.tempId) return;
+    if (event.type === "dialog.opened") {
+      this.applyOpenedDialog(event.dialog);
+      return;
+    }
+    if (event.type === "dialog.closed") {
+      this.applyClosedDialog(event.dialogId, event.reason, event.answer);
+      return;
+    }
+    if (event.type === "status.update") this.applyPendingStartStatus(pending, event.status);
+  }
+
+  /**
+   * Apply a constructing session's status from an ordered channel (the
+   * socket's own status frame, or a dialog close response): the daemon's
+   * projection is authoritative there, so the open list is replaced wholesale,
+   * exactly as applyStatus does for a ready session. The per-session map stays
+   * truthful too — the readiness swap seeds the selected status from it.
+   */
+  private applyPendingStartStatus(pending: PendingSessionStart, status: SessionStatus): void {
+    this.applyStatus(status);
+    if (pending.discarded || this.getState().selectedSession?.id !== pending.tempId) return;
+    this.setState({ pendingDialogs: status.pendingDialogs ?? [] });
   }
 
   private schedulePendingFlush(): void {

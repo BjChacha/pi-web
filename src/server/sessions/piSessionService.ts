@@ -15,6 +15,7 @@ import {
   type AgentSessionServices,
   type CreateAgentSessionRuntimeFactory,
   type EditToolDetails,
+  type ExtensionUIDialogOptions,
   type ExtensionUIContext,
   type ModelRuntime,
   type ResourceDiagnostic,
@@ -38,6 +39,10 @@ import type {
   AskUserCloseResponse,
   AskUserOutcome,
   AskUserSubmission,
+  ExtensionDialogAnswer,
+  ExtensionDialogCloseResponse,
+  ExtensionDialogKind,
+  ExtensionDialogOutcome,
   SavedPromptAttachment,
   SessionBulkArchiveResponse,
   SessionBulkDeleteArchivedResponse,
@@ -62,6 +67,9 @@ import { siblingWorkspaceCwds, type ProjectWorkspaceCwds } from "../workspaces/p
 import type { WorkspaceActivityService } from "../activity/workspaceActivityService.js";
 import { createAskUserToolDefinition, type AskUserInvocation, type AskUserToolDeps } from "./askUserTool.js";
 import { PendingAskStore, renderAskUserAnswersText, type PendingAskCloseResult, type PendingAskOpenResult } from "./pendingAskStore.js";
+import { PendingExtensionDialogStore, type ExtensionDialogCancelReason } from "./pendingExtensionDialogStore.js";
+import { ExtensionDialogWaiters, effectiveExtensionDialogTimeoutMs, extensionDialogCancelValue } from "./extensionDialogWaiters.js";
+import { DEFAULT_EXTENSION_DIALOGS_TIMEOUT_MS } from "../../config.js";
 import { createSpawnSessionToolDefinition, type SpawnSessionInvocation, type SpawnSessionResult } from "./spawnSessionTool.js";
 import { createSubsessionToolDefinitions, type SpawnSubsessionInvocation, type SpawnSubsessionResult, type SubsessionCheckResult, type SubsessionReadQuery, type SubsessionReadResult, type SubsessionStatus, type SubsessionSummary, type SubsessionToolDeps } from "./spawnSubsessionTool.js";
 import { buildTranscriptView } from "./subsessionTranscript.js";
@@ -126,6 +134,10 @@ function isPiSessionRef(ref: PiSessionLookup): ref is PiSessionRef {
 
 function lookupMatchesActiveSession(ref: PiSessionLookup, active: ActiveSession<PiSessionRuntime>): boolean {
   return !isPiSessionRef(ref) || cwdPathsEqual(active.runtime.cwd, ref.cwd);
+}
+
+function lookupMatchesStartupSession(ref: PiSessionLookup, session: PiAgentSession): boolean {
+  return !isPiSessionRef(ref) || cwdPathsEqual(session.sessionManager.getCwd(), ref.cwd);
 }
 
 type QueuedPromptKind = "steer" | "followUp";
@@ -719,6 +731,14 @@ export interface PiSessionServiceDependencies {
   askUserEnabled?: boolean;
   /** Daemon-lifetime open-ask state; defaults to an in-memory store in tests. */
   pendingAskStore?: PendingAskStore;
+  /** Daemon-lifetime open-dialog state; defaults to an in-memory store in tests. */
+  pendingExtensionDialogStore?: PendingExtensionDialogStore;
+  /**
+   * How long an extension dialog with no extension-set `timeout` waits for an
+   * answer before the daemon auto-cancels it; `0` waits forever. A tuning
+   * knob, not a gate: extension dialogs are always on.
+   */
+  extensionDialogsTimeoutMs?: number;
   /** Structured logger for notable runtime events (e.g. spawns). */
   logger?: PiSessionLogger;
   /** Clock seam for cleanup planning tests. */
@@ -739,6 +759,14 @@ export interface PiSessionServiceDependencies {
 export class PiSessionService implements SessionRouteService {
   private readonly active = new Map<string, ActiveSession<PiSessionRuntime>>();
   private readonly pendingSessionOpens = new Map<string, PendingSessionOpen>();
+  /**
+   * Sessions whose extension binding is still in flight. A `session_start`
+   * dialog parks that window before the session ever becomes active, so this
+   * is the only way the dialog answer/cancel and status paths can reach it;
+   * {@link getOrOpen} never consults it, keeping every other operation gated
+   * on full readiness.
+   */
+  private readonly startupSessions = new Map<string, PiAgentSession>();
   private readonly activities = new Map<string, { phase: "active" | "idle" | "error"; label: string; detail?: string; at: string }>();
   private readonly heartbeat: NodeJS.Timeout;
   private readonly commandService: SessionCommandService<PiAgentSession>;
@@ -785,6 +813,10 @@ export class PiSessionService implements SessionRouteService {
   private readonly notificationGenerationBySession = new WeakMap<PiAgentSession, SessionNotificationGeneration>();
   private readonly unreadStore: SessionUnreadStore;
   private readonly pendingAskStore: PendingAskStore;
+  private readonly pendingExtensionDialogStore: PendingExtensionDialogStore;
+  private readonly extensionDialogsTimeoutMs: number;
+  /** The parked extension Promise resolvers behind the store's open dialogs. */
+  private readonly dialogWaiters = new ExtensionDialogWaiters();
   private readonly catalogRefreshStatus: CatalogRefreshStatus | undefined;
   private readonly unreadPublicationRetryInitialMs: number;
   private readonly pendingUnreadMutations: SessionUnreadMutation[] = [];
@@ -807,6 +839,8 @@ export class PiSessionService implements SessionRouteService {
     this.notificationStore = deps.notificationStore ?? new SessionNotificationStore();
     this.unreadStore = deps.unreadStore ?? new SessionUnreadStore();
     this.pendingAskStore = deps.pendingAskStore ?? new PendingAskStore();
+    this.pendingExtensionDialogStore = deps.pendingExtensionDialogStore ?? new PendingExtensionDialogStore();
+    this.extensionDialogsTimeoutMs = deps.extensionDialogsTimeoutMs ?? DEFAULT_EXTENSION_DIALOGS_TIMEOUT_MS;
     this.catalogRefreshStatus = deps.catalogRefreshStatus;
     this.unreadPublicationRetryInitialMs = Math.max(
       0,
@@ -971,15 +1005,20 @@ export class PiSessionService implements SessionRouteService {
     this.clearUnreadPublicationRetry();
     clearInterval(this.heartbeat);
     this.clearCompactionDrainTimers();
+    // Same startup-park hazard as closeActive(): settle `session_start` dialogs
+    // of sessions still binding extensions before awaiting their pending opens.
+    for (const sessionId of this.startupSessions.keys()) this.endSessionExtensionDialogs(sessionId);
     const pendingOpens = this.pendingSessionOpenPromises();
     if (pendingOpens.length > 0) await Promise.allSettled(pendingOpens);
     const activeSessions = Array.from(new Set(this.active.values()));
     for (const active of activeSessions) {
       this.forgetUnreadActivity(active.runtime.session);
       this.pendingAskStore.forgetSession(active.runtime.session.sessionId);
+      this.endSessionExtensionDialogs(active.runtime.session.sessionId);
     }
     this.active.clear();
     this.pendingSessionOpens.clear();
+    this.startupSessions.clear();
     this.activities.clear();
     this.compactionPromptQueues.clear();
     this.authLossWarnings.clear();
@@ -1267,6 +1306,133 @@ export class PiSessionService implements SessionRouteService {
       { triggerTurn: false, deliverAs: "followUp" },
     ));
     this.publishStatus(session);
+  }
+
+  /**
+   * Record the user's answer to an open extension dialog and resolve the
+   * extension's parked Promise with it. Unlike an ask, nothing is delivered to
+   * the model: the waiter is extension code inside an already in-flight run
+   * (or an idle handler), so no custom message and no turn are triggered.
+   */
+  async answerDialog(ref: PiSessionLookup, dialogId: string, value: ExtensionDialogAnswer): Promise<ExtensionDialogCloseResponse> {
+    await this.assertWritable(ref);
+    const session = await this.sessionForStatusOrDialogClose(ref);
+    const result = this.pendingExtensionDialogStore.answer(session.sessionId, dialogId, value);
+    if (result.status === "stale") return { result: "stale", sessionStatus: this.statusFromSession(session) };
+    const { outcome } = result;
+    this.publishDialogClosed(session.sessionId, outcome);
+    // `value` is what the store validated and recorded as the outcome's answer.
+    this.dialogWaiters.settleWithAnswer(dialogId, value);
+    this.publishStatus(session);
+    return { result: "closed", outcome, sessionStatus: this.statusFromSession(session) };
+  }
+
+  /** Close an open extension dialog without an answer; the extension's wait settles with its kind's cancel value. */
+  async cancelDialog(ref: PiSessionLookup, dialogId: string): Promise<ExtensionDialogCloseResponse> {
+    await this.assertWritable(ref);
+    const session = await this.sessionForStatusOrDialogClose(ref);
+    const result = this.pendingExtensionDialogStore.cancel(session.sessionId, dialogId, "cancelled");
+    if (result.status === "stale") return { result: "stale", sessionStatus: this.statusFromSession(session) };
+    const { outcome } = result;
+    this.publishDialogClosed(session.sessionId, outcome);
+    this.dialogWaiters.settleWithCancelValue(dialogId);
+    this.publishStatus(session);
+    return { result: "closed", outcome, sessionStatus: this.statusFromSession(session) };
+  }
+
+  /**
+   * Implement one `ctx.ui.select()`/`confirm()`/`input()` call from extension
+   * code: open the store record, tell the browsers, and park a Promise that
+   * settles when the browser answers or cancels, the extension's own
+   * `signal`/`timeout` dismisses the dialog, the daemon default timeout
+   * elapses, or the runtime goes away. `store.open` validates the dialog, so a
+   * malformed one rejects the extension's call rather than rendering garbage.
+   * `async` so a rejected dialog becomes a rejection rather than a synchronous
+   * throw from a promise-returning method.
+   */
+  private async openExtensionDialog(
+    session: PiAgentSession,
+    request: { kind: ExtensionDialogKind; title: string; message?: string | undefined; options?: string[] | undefined; placeholder?: string | undefined },
+    opts: ExtensionUIDialogOptions | undefined,
+  ): Promise<boolean | string | undefined> {
+    const signal = opts?.signal;
+    // A pre-aborted signal dismisses the dialog before it ever opens.
+    if (signal?.aborted === true) return extensionDialogCancelValue(request.kind);
+    const timeoutMs = effectiveExtensionDialogTimeoutMs(opts?.timeout, this.extensionDialogsTimeoutMs);
+    const dialog = this.pendingExtensionDialogStore.open({
+      sessionId: session.sessionId,
+      kind: request.kind,
+      title: request.title,
+      ...(request.message === undefined ? {} : { message: request.message }),
+      ...(request.options === undefined ? {} : { options: request.options }),
+      ...(request.placeholder === undefined ? {} : { placeholder: request.placeholder }),
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
+      runScoped: session.isStreaming,
+    });
+    this.events.publish(session.sessionId, { type: "dialog.opened", dialog });
+    this.publishStatus(session);
+    return this.dialogWaiters.park(dialog, {
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
+      ...(signal === undefined ? {} : { signal }),
+      onTrigger: (reason) => {
+        if (this.closeExtensionDialogFromTrigger(session.sessionId, dialog.dialogId, reason)) this.publishStatusForSessionId(session.sessionId);
+      },
+    });
+  }
+
+  /**
+   * Close a dialog whose wait ended without the browser (timeout, signal
+   * abort, run end, runtime teardown) and settle its parked Promise. Returns
+   * whether this call closed the dialog; a stale close means a browser answer
+   * or an earlier trigger already settled everything.
+   */
+  private closeExtensionDialogFromTrigger(sessionId: string, dialogId: string, reason: ExtensionDialogCancelReason): boolean {
+    const result = this.pendingExtensionDialogStore.cancel(sessionId, dialogId, reason);
+    if (result.status !== "closed") return false;
+    this.publishDialogClosed(sessionId, result.outcome);
+    this.dialogWaiters.settleWithCancelValue(dialogId);
+    return true;
+  }
+
+  /**
+   * Settle the session's run-scoped dialogs as `"aborted"`. Runs at
+   * abort-request time (a user abort parks the agent loop behind the dialog
+   * handler, so `agent_end` would never arrive on its own) and again from
+   * the `agent_end` observer as the run-crash backstop — the store makes the
+   * second settlement a stale no-op. Idle-opened dialogs (a `session_start`
+   * probe, say) are not run-scoped and survive, because their waiter
+   * outlives the run.
+   */
+  private abortRunScopedExtensionDialogs(sessionId: string): void {
+    let closedAny = false;
+    for (const dialog of this.pendingExtensionDialogStore.pendingDialogs(sessionId)) {
+      if (dialog.runScoped) closedAny = this.closeExtensionDialogFromTrigger(sessionId, dialog.dialogId, "aborted") || closedAny;
+    }
+    if (closedAny) this.publishStatusForSessionId(sessionId);
+  }
+
+  /**
+   * Settle every dialog of the session as `"session-ended"`: the runtime
+   * whose extension code is parked on them is being closed, replaced, or
+   * disposed, so those Promises would otherwise never settle.
+   */
+  private endSessionExtensionDialogs(sessionId: string): void {
+    let closedAny = false;
+    for (const dialog of this.pendingExtensionDialogStore.pendingDialogs(sessionId)) {
+      closedAny = this.closeExtensionDialogFromTrigger(sessionId, dialog.dialogId, "session-ended") || closedAny;
+    }
+    // Publishes only while the session is still (or already re-)registered as
+    // active, so teardown paths stay silent and runtime replacement refreshes.
+    if (closedAny) this.publishStatusForSessionId(sessionId);
+  }
+
+  private publishDialogClosed(sessionId: string, outcome: ExtensionDialogOutcome): void {
+    this.events.publish(sessionId, {
+      type: "dialog.closed",
+      dialogId: outcome.dialogId,
+      reason: outcome.reason,
+      ...(outcome.answer === undefined ? {} : { answer: outcome.answer }),
+    });
   }
 
   /**
@@ -1631,7 +1797,7 @@ export class PiSessionService implements SessionRouteService {
   }
 
   async status(ref: PiSessionLookup): Promise<ClientSessionStatus> {
-    return this.statusFromSession(await this.getOrOpen(ref));
+    return this.statusFromSession(await this.sessionForStatusOrDialogClose(ref));
   }
 
   /**
@@ -2214,6 +2380,12 @@ export class PiSessionService implements SessionRouteService {
     const sessionId = active.runtime.session.sessionId;
     this.clearCompactionPromptQueue(sessionId);
     clearSessionQueue(active.runtime.session);
+    // Settle run-scoped dialogs now, at abort-request time: pi's agent loop
+    // waits for a parked `tool_call` dialog handler before it can emit
+    // `agent_end`, so leaving settlement to the `agent_end` observer would
+    // strand the dialog until its timeout. Settling before the runtime abort
+    // also means a failing or hung abort cannot strand the parked waiter.
+    this.abortRunScopedExtensionDialogs(sessionId);
     try {
       await this.abortSessionOperations(active.runtime.session);
       this.publishActivity(active.runtime.session, "stopped", "idle");
@@ -2423,6 +2595,10 @@ export class PiSessionService implements SessionRouteService {
   }
 
   private async closeActive(sessionId: string, notificationPolicy: NotificationClosePolicy = CLEAR_RUNTIME_NOTIFICATIONS): Promise<void> {
+    // A session whose open is parked on a `session_start` dialog holds its
+    // pending open until the dialog settles; settle it first so closing cannot
+    // block behind the dialog timeout (which `0` makes infinite).
+    if (this.startupSessions.has(sessionId)) this.endSessionExtensionDialogs(sessionId);
     const pendingOpens = this.pendingSessionOpenPromises(sessionId);
     if (pendingOpens.length > 0) await Promise.allSettled(pendingOpens);
     const active = this.active.get(sessionId);
@@ -2438,6 +2614,9 @@ export class PiSessionService implements SessionRouteService {
     // An open ask is meaningful only while the runtime that posted it exists: no
     // one is left to receive the answers, so it is dropped without an outcome.
     this.pendingAskStore.forgetSession(sessionId);
+    // Open dialogs share that stance, but their extension waiters are parked
+    // Promises inside the dying runtime: settle them rather than dropping them.
+    this.endSessionExtensionDialogs(sessionId);
     this.active.delete(sessionId);
     this.activities.delete(sessionId);
     this.workspaceActivity?.removeSession(sessionId, active.runtime.session.sessionManager.getCwd());
@@ -2559,6 +2738,28 @@ export class PiSessionService implements SessionRouteService {
     return undefined;
   }
 
+  private startupSessionForLookup(ref: PiSessionLookup): PiAgentSession | undefined {
+    const sessionId = sessionIdFromLookup(ref);
+    const exact = this.startupSessions.get(sessionId);
+    if (exact !== undefined && lookupMatchesStartupSession(ref, exact)) return exact;
+    for (const [candidateId, session] of this.startupSessions.entries()) {
+      if (candidateId.startsWith(sessionId) && lookupMatchesStartupSession(ref, session)) return session;
+    }
+    return undefined;
+  }
+
+  /**
+   * The session to serve a read-only status or a dialog close for, while it
+   * can still be found: active first, then still starting up, and only then
+   * the on-demand open path (which a stale close on an idle session needs for
+   * its status projection).
+   */
+  private async sessionForStatusOrDialogClose(ref: PiSessionLookup): Promise<PiAgentSession> {
+    const reachable = this.activeForLookup(ref)?.runtime.session ?? this.startupSessionForLookup(ref);
+    if (reachable !== undefined) return reachable;
+    return this.getOrOpen(ref);
+  }
+
   /**
    * Construct a session while telling waiting browsers which phase of startup
    * they are waiting on. The reporting wraps the *whole* construction rather
@@ -2647,6 +2848,10 @@ export class PiSessionService implements SessionRouteService {
             this.notificationGenerationBySession.set(session, candidateGeneration);
           }
           this.bindRuntime(active, session);
+          // The runtime being replaced parked every dialog the store still
+          // holds for this session; settle those waits before the new
+          // runtime's extensions can open fresh dialogs under the same id.
+          this.endSessionExtensionDialogs(boundSession.sessionId);
           boundSession = session;
           await this.bindSessionExtensions(session, candidateGeneration);
           if (candidateGeneration !== undefined) {
@@ -2679,6 +2884,9 @@ export class PiSessionService implements SessionRouteService {
       }
       active.unsubscribe();
       this.forgetUnreadActivity(boundSession);
+      // A session_start dialog may already be parked when a later startup
+      // step fails; its waiter dies with the runtime being torn down here.
+      this.endSessionExtensionDialogs(boundSession.sessionId);
       let removedActive = false;
       for (const [sessionId, candidate] of this.active.entries()) {
         if (candidate !== active) continue;
@@ -2705,15 +2913,24 @@ export class PiSessionService implements SessionRouteService {
     generation: SessionNotificationGeneration | undefined,
   ): Promise<void> {
     const uiContext = this.sessionUiContext(session, generation);
-    await session.bindExtensions({
-      uiContext,
-      mode: "rpc",
-      onError: (error) => {
-        const message = `${error.extensionPath}: ${error.error}`;
-        this.publishActivity(session, "extension error", "error", message);
-        this.events.publish(session.sessionId, { type: "session.error", message });
-      },
-    });
+    // A `session_start` hook can park this bind on a dialog the browser has
+    // not answered yet. On the initial create/open path the session becomes
+    // active only after this returns, so register it for the duration: the
+    // answer that unblocks startup has to be reachable while it waits.
+    this.startupSessions.set(session.sessionId, session);
+    try {
+      await session.bindExtensions({
+        uiContext,
+        mode: "rpc",
+        onError: (error) => {
+          const message = `${error.extensionPath}: ${error.error}`;
+          this.publishActivity(session, "extension error", "error", message);
+          this.events.publish(session.sessionId, { type: "session.error", message });
+        },
+      });
+    } finally {
+      this.startupSessions.delete(session.sessionId);
+    }
   }
 
   private replaceSessionNotificationContext(session: PiAgentSession, generation: SessionNotificationGeneration): void {
@@ -2744,13 +2961,27 @@ export class PiSessionService implements SessionRouteService {
         notificationId: added.notification.id,
       });
     };
-    // PI WEB owns the browser-facing notification and text-formatting
-    // boundaries. Delegate every other UI method to Pi's headless defaults so
-    // unsupported dialogs cancel safely instead of hanging.
+    // PI WEB owns the browser-facing dialog, notification, and text-formatting
+    // boundaries: the three dialog primitives park daemon-held Promises that
+    // the browser answers, while every other UI method delegates to Pi's
+    // headless defaults so unsupported surfaces cancel safely instead of
+    // hanging.
     return new Proxy(baseUiContext, {
-      get(target, property, receiver): unknown {
+      get: (target, property, receiver): unknown => {
         if (property === "notify") return notify;
         if (property === "theme") return plainTextTheme;
+        if (property === "confirm") {
+          return (title: string, message: string, opts?: ExtensionUIDialogOptions) =>
+            this.openExtensionDialog(session, { kind: "confirm", title, message }, opts);
+        }
+        if (property === "select") {
+          return (title: string, options: string[], opts?: ExtensionUIDialogOptions) =>
+            this.openExtensionDialog(session, { kind: "select", title, options }, opts);
+        }
+        if (property === "input") {
+          return (title: string, placeholder: string | undefined, opts?: ExtensionUIDialogOptions) =>
+            this.openExtensionDialog(session, { kind: "input", title, placeholder }, opts);
+        }
         const value: unknown = Reflect.get(target, property, receiver);
         return value;
       },
@@ -2903,6 +3134,7 @@ export class PiSessionService implements SessionRouteService {
       this.events.publish(session.sessionId, toClientEvent(event));
       this.publishActivityForEvent(session, event);
       const eventType = getString(event, "type");
+      if (eventType === "agent_end") this.abortRunScopedExtensionDialogs(session.sessionId);
       if (eventType === "compaction_end") this.scheduleCompactionQueueDrain(session.sessionId);
       if (eventType === "agent_start" || eventType === "agent_end") this.scheduleCompactionQueueDrain(session.sessionId);
       this.publishStatus(session);
@@ -3300,6 +3532,7 @@ export class PiSessionService implements SessionRouteService {
     const contextUsage = session.getContextUsage();
     const warnings = this.warningsForSession(session);
     const pendingAsk = this.pendingAskStore.pendingAsk(session.sessionId);
+    const pendingDialogs = this.pendingExtensionDialogStore.pendingDialogs(session.sessionId);
     return {
       sessionId: session.sessionId,
       persisted: sessionFileExists(session.sessionFile),
@@ -3316,6 +3549,7 @@ export class PiSessionService implements SessionRouteService {
       ...(contextUsage === undefined ? {} : { contextUsage }),
       ...(warnings.length === 0 ? {} : { warnings }),
       ...(pendingAsk === undefined ? {} : { pendingAsk }),
+      ...(pendingDialogs.length === 0 ? {} : { pendingDialogs }),
     };
   }
 

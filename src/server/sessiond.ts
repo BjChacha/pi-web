@@ -87,6 +87,7 @@ async function createSessionDaemonRuntime() {
     projectWorkspaces,
     subsessionsEnabled: config.subsessions,
     askUserEnabled: config.askUser,
+    extensionDialogsTimeoutMs: config.extensionDialogsTimeoutMs,
     notificationStore,
     unreadStore,
     catalogRefreshStatus: catalogRefresher,
