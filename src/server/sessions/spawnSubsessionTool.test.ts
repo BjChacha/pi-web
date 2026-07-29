@@ -112,6 +112,36 @@ describe("createSubsessionToolDefinitions", () => {
     });
   });
 
+  it("spawn_subsession forwards an explicit model as a model spec and names the model used", async () => {
+    const spawn = vi.fn(() => Promise.resolve({ sessionId: "child-3", cwd: "/repos/a", model: "openai/gpt-5" }));
+    const { spawn: spawnTool } = tools({ spawn });
+
+    const result = await spawnTool.execute("call-model", { prompt: "do it", model: "openai/gpt-5" }, undefined, undefined, ctxFor("parent-1", "/sessions/parent-1.jsonl", dispatchModel));
+
+    expect(spawn).toHaveBeenCalledWith({
+      spawningCwd: "/repos/a",
+      parentSessionId: "parent-1",
+      parentSessionFile: "/sessions/parent-1.jsonl",
+      prompt: "do it",
+      cwd: undefined,
+      model: dispatchModel,
+      modelSpec: "openai/gpt-5",
+    });
+    expect(result.details).toEqual({ sessionId: "child-3", cwd: "/repos/a", model: "openai/gpt-5" });
+    expect(firstText(result.content)).toBe("Started tracked subsession child-3 in /repos/a using model openai/gpt-5. Continue other work, then join with yield_to_subsessions; do not poll.");
+  });
+
+  it("spawn_subsession teaches the model parameter format and the #provider/model-id reference convention", () => {
+    const { spawn: spawnTool } = tools({});
+
+    expect(spawnTool.parameters).toMatchObject({
+      properties: {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- stringMatching yields `any` against the loosely typed tool schema.
+        model: { description: expect.stringMatching(/provider\/model-id.*#provider\/model-id.*Omit to inherit/s) },
+      },
+    });
+  });
+
   it("list_subsessions reports the caller's subsessions and their status", async () => {
     const list = vi.fn(() => Promise.resolve([
       { sessionId: "child-1", cwd: "/repos/a", status: "working" as const },
