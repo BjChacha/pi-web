@@ -1910,7 +1910,7 @@ export class PiSessionService implements SessionRouteService {
     const streamingMessage = session.state.streamingMessage;
     const partial = streamingMessage === undefined || streamingMessage === null
       ? null
-      : projectBrowserMessage(streamingMessage);
+      : annotateAssistantThinkingLevel(projectBrowserMessage(streamingMessage), session.thinkingLevel);
     return { seq, partial };
   }
 
@@ -3220,7 +3220,7 @@ export class PiSessionService implements SessionRouteService {
       }
     }
     active.unsubscribe = session.subscribe((event) => {
-      this.events.publish(session.sessionId, toClientEvent(event));
+      this.events.publish(session.sessionId, toClientEvent(event, session.thinkingLevel));
       this.publishActivityForEvent(session, event);
       const eventType = getString(event, "type");
       if (eventType === "agent_end") this.abortRunScopedExtensionDialogs(session.sessionId);
@@ -4119,11 +4119,30 @@ function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
+/**
+ * Attach the thinking level in effect when an assistant message was generated,
+ * so chat bubbles can show it next to the model. Non-assistant messages pass
+ * through by reference; assistant messages are copied only when a level is set.
+ * "off" is the absence of thinking, not a level worth labeling on every bubble.
+ */
+function annotateAssistantThinkingLevel(message: unknown, thinkingLevel: string | undefined): unknown {
+  if (thinkingLevel === undefined || thinkingLevel === "" || thinkingLevel === "off") return message;
+  if (!isRecord(message) || message["role"] !== "assistant") return message;
+  return { ...message, thinkingLevel };
+}
+
 function historyMessages(session: PiAgentSession): unknown[] {
   const messages: unknown[] = [];
+  // Pi records the initial level at session creation and every later change, so
+  // walking the branch yields the level in effect for each assistant message.
+  let thinkingLevel: string | undefined;
   for (const entry of session.sessionManager.getBranch()) {
     if (!isRecord(entry)) continue;
-    if (entry["type"] === "message") messages.push(entry["message"]);
+    if (entry["type"] === "message") messages.push(annotateAssistantThinkingLevel(entry["message"], thinkingLevel));
+    else if (entry["type"] === "thinking_level_change") {
+      const level = getString(entry, "thinkingLevel");
+      if (level !== undefined) thinkingLevel = level;
+    }
     else if (entry["type"] === "custom_message" && entry["display"] === true) messages.push({ role: "custom", content: entry["content"], customType: entry["customType"], details: entry["details"] });
     else if (entry["type"] === "compaction") messages.push({ role: "system", source: "compaction", content: `Compacted history:\n\n${stringValue(entry["summary"])}` });
     else if (entry["type"] === "branch_summary") messages.push({ role: "system", source: "branch_summary", content: `Branch summary:\n\n${stringValue(entry["summary"])}` });
@@ -4167,7 +4186,7 @@ function finalAssistantText(messages: readonly unknown[]): string {
   return "";
 }
 
-function toClientEvent(event: unknown): SessionUiEvent {
+function toClientEvent(event: unknown, thinkingLevel?: string): SessionUiEvent {
   const eventType = getString(event, "type");
   const assistantMessageEvent = getProperty(event, "assistantMessageEvent");
   if (eventType === "message_update" && getString(assistantMessageEvent, "type") === "text_delta") {
@@ -4192,7 +4211,8 @@ function toClientEvent(event: unknown): SessionUiEvent {
   if (eventType === "agent_end") return { type: "agent.end" };
   if (eventType === "message_end") {
     const message = getProperty(event, "message");
-    return message === undefined ? { type: "message.end" } : { type: "message.end", message };
+    if (message === undefined) return { type: "message.end" };
+    return { type: "message.end", message: annotateAssistantThinkingLevel(message, thinkingLevel) };
   }
   return { type: "pi.event", eventType: eventType ?? "unknown" };
 }
