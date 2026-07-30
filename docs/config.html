@@ -813,7 +813,8 @@
                 inheriting the dispatching session's model. The match is strict: an unknown or malformed value is
                 rejected with an error. A <code>#provider/model-id</code> reference in the prompt (see
                 <a href="#prompt-completions">Prompt completions</a>) is how users ask for a specific model; agents
-                forward that reference as this parameter.
+                forward that reference as this parameter. The new session also inherits the dispatching session's
+                thinking level, clamped to its model's capabilities.
               </p>
               <p>
                 In <strong>Settings → Session daemon</strong>, these keys are saved on the selected machine. Restart the

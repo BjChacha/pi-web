@@ -244,6 +244,11 @@ interface StartSessionOptions {
   parentSession?: string;
   initialModel?: AgentModel;
   /**
+   * Thinking level for the brand new session; omit to resolve from settings
+   * and pi defaults. Pi clamps it to the initial model's capabilities.
+   */
+  initialThinkingLevel?: ClientThinkingLevel;
+  /**
    * Opaque label, echoed on this construction's startup progress so a browser
    * row with no session id yet can recognise its own.
    */
@@ -439,7 +444,7 @@ interface PendingSessionOpen {
   promise: Promise<ActiveSession<PiSessionRuntime>>;
 }
 
-interface CreateSessionRuntimeOptions extends Pick<InternalStartSessionOptions, "initialModel" | "creationProvenance" | "startupToken"> {
+interface CreateSessionRuntimeOptions extends Pick<InternalStartSessionOptions, "initialModel" | "initialThinkingLevel" | "creationProvenance" | "startupToken"> {
   notificationGeneration?: SessionNotificationGeneration;
   notifications?: "enabled" | "disabled";
   /**
@@ -607,11 +612,13 @@ interface CreateAgentRuntimeOptions {
   sessionManager: PiSessionManager;
   delegationToolsEnabled: boolean;
   initialModel?: AgentModel;
+  initialThinkingLevel?: ClientThinkingLevel;
 }
 
 type PiWebRuntimeFactoryOptions = Parameters<CreateAgentSessionRuntimeFactory>[0] & {
   delegationToolsEnabled?: boolean;
   initialModel?: AgentModel;
+  initialThinkingLevel?: ClientThinkingLevel;
 };
 
 type PiWebCreateAgentSessionRuntimeFactory = (
@@ -622,7 +629,7 @@ type CreateAgentRuntime = (createRuntime: PiWebCreateAgentSessionRuntimeFactory,
 
 function defaultCreateAgentRuntime(createRuntime: PiWebCreateAgentSessionRuntimeFactory, options: CreateAgentRuntimeOptions): Promise<PiSessionRuntime> {
   if (!(options.sessionManager instanceof SessionManager)) throw new Error("Default runtime creation requires an SDK SessionManager");
-  const runtimeFactory = createRuntimeWithOneShotSessionOptions(createRuntime, options.initialModel, options.delegationToolsEnabled);
+  const runtimeFactory = createRuntimeWithOneShotSessionOptions(createRuntime, options.initialModel, options.initialThinkingLevel, options.delegationToolsEnabled);
   return createAgentSessionRuntime(runtimeFactory, {
     cwd: options.cwd,
     agentDir: options.agentDir,
@@ -633,20 +640,26 @@ function defaultCreateAgentRuntime(createRuntime: PiWebCreateAgentSessionRuntime
 function createRuntimeWithOneShotSessionOptions(
   createRuntime: PiWebCreateAgentSessionRuntimeFactory,
   initialModel: AgentModel | undefined,
+  initialThinkingLevel: ClientThinkingLevel | undefined,
   delegationToolsEnabled: boolean,
 ): CreateAgentSessionRuntimeFactory {
   // These inputs belong only to the session being opened. A later runtime
-  // replacement resolves its own model and delegation capability.
+  // replacement resolves its own model and delegation capability, and restores
+  // the thinking level from the existing session file.
   let pendingInitialModel = initialModel;
+  let pendingInitialThinkingLevel = initialThinkingLevel;
   let pendingDelegationToolsEnabled: boolean | undefined = delegationToolsEnabled;
   return async (options) => {
     const model = pendingInitialModel;
+    const thinkingLevel = pendingInitialThinkingLevel;
     const toolsEnabled = pendingDelegationToolsEnabled;
     pendingInitialModel = undefined;
+    pendingInitialThinkingLevel = undefined;
     pendingDelegationToolsEnabled = undefined;
     return createRuntime({
       ...options,
       ...(model === undefined ? {} : { initialModel: model }),
+      ...(thinkingLevel === undefined ? {} : { initialThinkingLevel: thinkingLevel }),
       ...(toolsEnabled === undefined ? {} : { delegationToolsEnabled: toolsEnabled }),
     });
   };
@@ -678,7 +691,7 @@ function createDefaultRuntimeFactory(
   subsessions?: SubsessionToolDeps,
   askUser?: AskUserToolDeps,
 ): PiWebCreateAgentSessionRuntimeFactory {
-  return async ({ cwd, agentDir, sessionManager, sessionStartEvent, initialModel, delegationToolsEnabled }) => {
+  return async ({ cwd, agentDir, sessionManager, sessionStartEvent, initialModel, initialThinkingLevel, delegationToolsEnabled }) => {
     const services: AgentSessionServices = await createAgentSessionServices({ cwd, agentDir, modelRuntime });
     const resolvedDelegationToolsEnabled = delegationToolsEnabled
       ?? await sessionAllowsDelegationTools(sessionManager, sessionManagers);
@@ -689,6 +702,7 @@ function createDefaultRuntimeFactory(
       customTools,
       ...(sessionStartEvent === undefined ? {} : { sessionStartEvent }),
       ...(initialModel === undefined ? {} : { model: initialModel }),
+      ...(initialThinkingLevel === undefined ? {} : { thinkingLevel: initialThinkingLevel }),
     });
     return { ...result, services, diagnostics: services.diagnostics };
   };
@@ -1170,6 +1184,7 @@ export class PiSessionService implements SessionRouteService {
         startupIntent: "create",
         ...(options.startupToken === undefined ? {} : { startupToken: options.startupToken }),
         ...(options.initialModel === undefined ? {} : { initialModel: options.initialModel }),
+        ...(options.initialThinkingLevel === undefined ? {} : { initialThinkingLevel: options.initialThinkingLevel }),
         ...(options.creationProvenance === undefined ? {} : { creationProvenance: options.creationProvenance }),
       },
     );
@@ -1207,7 +1222,10 @@ export class PiSessionService implements SessionRouteService {
     const model = input.modelSpec === undefined
       ? input.model
       : await this.resolveSpawnModel(input.spawningSessionId, input.modelSpec);
-    const created = await this.start(decision.cwd, model === undefined ? {} : { initialModel: model });
+    const created = await this.start(decision.cwd, {
+      ...(model === undefined ? {} : { initialModel: model }),
+      ...(input.thinkingLevel === undefined ? {} : { initialThinkingLevel: input.thinkingLevel }),
+    });
     const modelUsed = this.active.get(created.id)?.runtime.session.model;
     await this.prompt(created.id, input.prompt);
     this.logger.info(
@@ -1239,6 +1257,7 @@ export class PiSessionService implements SessionRouteService {
     const created = await this.startSession(decision.cwd, {
       ...(input.parentSessionFile === undefined ? {} : { parentSession: input.parentSessionFile }),
       ...(model === undefined ? {} : { initialModel: model }),
+      ...(input.thinkingLevel === undefined ? {} : { initialThinkingLevel: input.thinkingLevel }),
       creationProvenance: "tracked-subsession",
     });
     const modelUsed = this.active.get(created.id)?.runtime.session.model;
@@ -2864,6 +2883,7 @@ export class PiSessionService implements SessionRouteService {
       sessionManager,
       delegationToolsEnabled,
       ...(options.initialModel === undefined ? {} : { initialModel: options.initialModel }),
+      ...(options.initialThinkingLevel === undefined ? {} : { initialThinkingLevel: options.initialThinkingLevel }),
     });
     const active: ActiveSession<PiSessionRuntime> = { runtime, unsubscribe: noop };
     let boundSession = runtime.session;
