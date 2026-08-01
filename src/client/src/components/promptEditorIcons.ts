@@ -46,6 +46,16 @@ export function renderStopIcon(): TemplateResult {
   `;
 }
 
+/** Check-square: the plan-mode toggle, shown only when a plan extension command is installed. */
+export function renderPlanIcon(): TemplateResult {
+  return svg`
+    <svg class="prompt-plan-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="M9 11 12 14 22 4"></path>
+      <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+    </svg>
+  `;
+}
+
 /**
  * A gauge whose bar count comes from the available thinking levels (the non-"off"
  * levels) and whose fill reflects the current level's rank. Bars are laid out to

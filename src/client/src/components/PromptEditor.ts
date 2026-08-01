@@ -15,11 +15,23 @@ import { clearDraft, loadDraft, saveDraft } from "../promptDraftStorage";
 import { loadAttachmentDelivery, saveAttachmentDelivery } from "../attachmentPreferences";
 import { createMobilePromptEnterMedia, readPromptEnterPreference, shouldSendPromptOnEnterShortcut, shouldUsePromptEnterShiftShortcut } from "../promptEnterBehavior";
 import { promptEditorStyles, type CompletionItem } from "./shared";
-import { renderAttachIcon, renderSendIcon, renderQueueIcon, renderSteerIcon, renderStopIcon, renderThinkingGauge } from "./promptEditorIcons";
+import { renderAttachIcon, renderPlanIcon, renderSendIcon, renderQueueIcon, renderSteerIcon, renderStopIcon, renderThinkingGauge } from "./promptEditorIcons";
 import { thinkingGauge, thinkingLevelLabel } from "../../../shared/thinkingLevels";
 import "./AutocompleteMenu";
 
 type PendingAttachment = CapturedAttachment & { id: string };
+
+/**
+ * Extension command names that toggle plan mode. The plan plugins in the Pi
+ * ecosystem (pi-plan-mode, @ifi/pi-plan, ...) register a `/plan` command; the
+ * plan button is shown only when one of them is installed.
+ */
+export const PLAN_MODE_COMMAND_NAMES = new Set(["plan", "plan-mode"]);
+
+/** The installed plan-mode extension command, or undefined when none is. */
+export function planModeCommandName(commands: readonly SlashCommand[]): string | undefined {
+  return commands.find((command) => command.source === "extension" && PLAN_MODE_COMMAND_NAMES.has(command.name))?.name;
+}
 
 @customElement("prompt-editor")
 export class PromptEditor extends LitElement {
@@ -39,6 +51,7 @@ export class PromptEditor extends LitElement {
   @property({ attribute: false }) onStop?: () => void;
   @property({ attribute: false }) onSelectModel?: () => void;
   @property({ attribute: false }) onSelectThinking?: () => void;
+  @property({ attribute: false }) onTogglePlan?: (command: string) => void;
   @property({ attribute: false }) availableThinkingLevels: readonly string[] = [];
   @query(".markdown-editor") private editorHost?: HTMLDivElement;
   @query(".attachment-input") private attachmentInput?: HTMLInputElement;
@@ -50,6 +63,8 @@ export class PromptEditor extends LitElement {
   // is reactive, since that is the only draft-derived value the template shows.
   private draft = "";
   @state() private currentInputMode: InputMode = { kind: "normal" };
+  /** Name of the installed plan-mode extension command, once known for this session. */
+  @state() private planCommandName: string | undefined = undefined;
   @state() private completions: CompletionItem[] = [];
   @state() private selectedIndex = 0;
   @state() private attachments: PendingAttachment[] = [];
@@ -74,6 +89,8 @@ export class PromptEditor extends LitElement {
     this.currentInputMode = inputModeForDraft(this.draft);
     this.completions = [];
     this.selectedIndex = 0;
+    this.planCommandName = undefined;
+    void this.refreshPlanModeCommand();
   }
 
   protected override shouldUpdate(changed: PropertyValues<this>): boolean {
@@ -166,10 +183,31 @@ export class PromptEditor extends LitElement {
     const provider = status.model?.provider !== undefined && status.model.provider !== "" ? `${status.model.provider}/` : "";
     return html`
       <div class="compact-status" aria-label="Session status">
+        ${this.planCommandName === undefined ? null : html`
+          <button class="plan-mode-toggle" title=${`Toggle plan mode (runs /${this.planCommandName})`} aria-label="Toggle plan mode" @click=${this.handleTogglePlan}>${renderPlanIcon()}<span>Plan</span></button>
+        `}
         <button class="select-model" title="Select model" @click=${() => this.onSelectModel?.()}>${provider}${model}</button>
         <button class="select-thinking icon-button" title=${`Thinking level: ${thinkingLevelLabel(status.thinkingLevel)}`} aria-label=${`Thinking level: ${thinkingLevelLabel(status.thinkingLevel)}`} @click=${() => this.onSelectThinking?.()}>${renderThinkingGauge(thinkingGauge(status.thinkingLevel, this.availableThinkingLevels))}</button>
       </div>
     `;
+  }
+
+  private readonly handleTogglePlan = (): void => {
+    if (this.planCommandName !== undefined) this.onTogglePlan?.(this.planCommandName);
+  };
+
+  private async refreshPlanModeCommand(): Promise<void> {
+    if (this.sessionId === undefined || this.sessionId === "" || this.cwd === undefined || this.cwd === "") {
+      this.planCommandName = undefined;
+      return;
+    }
+    const machineId = this.machineId;
+    const sessionId = this.sessionId;
+    const cwd = this.cwd;
+    const commands = await api.commands({ id: sessionId, cwd }, machineId).catch(emptySlashCommands);
+    // Ignore responses for a session that changed while the request was in flight.
+    if (this.machineId !== machineId || this.sessionId !== sessionId || this.cwd !== cwd) return;
+    this.planCommandName = planModeCommandName(commands);
   }
 
   private renderAttachments() {
