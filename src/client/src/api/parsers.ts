@@ -465,6 +465,7 @@ export function parseSessionStatus(value: unknown): SessionStatus {
     ...optionalField("messageCount", optionalNumber(record, "messageCount")),
     tokens: parseTokens(record["tokens"]),
     cost: requireNumber(record, "cost"),
+    ...optionalField("tokenRate", optionalNumber(record, "tokenRate")),
     ...optionalModel(record["model"]),
     ...optionalContextUsage(record["contextUsage"]),
     ...optionalField("thinkingLevel", optionalString(record, "thinkingLevel")),

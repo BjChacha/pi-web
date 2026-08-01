@@ -95,6 +95,37 @@ export interface PiSessionLogger {
 const noopLogger: PiSessionLogger = { info() { /* no-op */ } };
 const DEFAULT_UNREAD_PUBLICATION_RETRY_MS = 1_000;
 /**
+ * Chars per token used to estimate a live rate while streaming when the
+ * provider omits usage from partial messages (e.g. exotic OpenAI-compatible
+ * backends without `include_usage`). Real usage replaces the estimate as soon
+ * as the provider reports it; the estimate is never shown once a message ends.
+ */
+const ESTIMATED_CHARS_PER_TOKEN = 4;
+/**
+ * Minimum generation window before a live token rate is reported. Below this
+ * the tokens/elapsed ratio is dominated by startup jitter and jumps around.
+ */
+const MIN_TOKEN_RATE_ELAPSED_MS = 500;
+
+/**
+ * Per-session token-rate measurement, fed by the raw Pi session event stream.
+ * Pi does not expose a tokens-per-second figure; pi-web measures it: real
+ * cumulative `usage.output` arrives on streaming partials for Anthropic
+ * (`message_delta`) and OpenAI-compatible (`include_usage`) providers, and the
+ * final `message_end` carries the definitive usage. The char-based estimate
+ * only covers providers that never report live usage.
+ */
+interface SessionTokenRate {
+  /** Epoch ms of the current assistant message's first content delta. Undefined before the first delta, so TTFT is excluded. */
+  startedAtMs: number | undefined;
+  /** Chars streamed (text + thinking deltas) for the current message. */
+  streamedChars: number;
+  /** Latest cumulative real output tokens reported for the current message's partial. */
+  streamedOutputTokens: number;
+  /** Tokens/sec of the most recently completed assistant message. */
+  lastRate: number | undefined;
+}
+/**
  * User-facing names for the two phases of session startup PI WEB can prove it
  * is inside: it awaits exactly one call for each, so the phase is a fact rather
  * than a guess. Deliberately free of internal symbol names and file paths.
@@ -806,6 +837,8 @@ export class PiSessionService implements SessionRouteService {
    */
   private readonly startupSessions = new Map<string, PiAgentSession>();
   private readonly activities = new Map<string, { phase: "active" | "idle" | "error"; label: string; detail?: string; at: string }>();
+  /** Per-session token-rate measurement; entries live as long as the session does. */
+  private readonly tokenRateTrackers = new Map<string, SessionTokenRate>();
   private readonly heartbeat: NodeJS.Timeout;
   private readonly commandService: SessionCommandService<PiAgentSession>;
   /** Runtime-identity gate held while Pi may await abandoned-branch summarization. */
@@ -1058,6 +1091,7 @@ export class PiSessionService implements SessionRouteService {
     this.pendingSessionOpens.clear();
     this.startupSessions.clear();
     this.activities.clear();
+    this.tokenRateTrackers.clear();
     this.compactionPromptQueues.clear();
     this.authLossWarnings.clear();
     this.subsessionParents.clear();
@@ -2707,6 +2741,7 @@ export class PiSessionService implements SessionRouteService {
     this.endSessionExtensionDialogs(sessionId);
     this.active.delete(sessionId);
     this.activities.delete(sessionId);
+    this.tokenRateTrackers.delete(sessionId);
     this.workspaceActivity?.removeSession(sessionId, active.runtime.session.sessionManager.getCwd());
     this.clearAuthLossWarningsForSession(sessionId);
     this.clearCompactionPromptQueue(sessionId);
@@ -3220,6 +3255,7 @@ export class PiSessionService implements SessionRouteService {
       }
     }
     active.unsubscribe = session.subscribe((event) => {
+      this.updateTokenRate(session, event);
       this.events.publish(session.sessionId, toClientEvent(event, session.thinkingLevel));
       this.publishActivityForEvent(session, event);
       const eventType = getString(event, "type");
@@ -3622,6 +3658,7 @@ export class PiSessionService implements SessionRouteService {
     const warnings = this.warningsForSession(session);
     const pendingAsk = this.pendingAskStore.pendingAsk(session.sessionId);
     const pendingDialogs = this.pendingExtensionDialogStore.pendingDialogs(session.sessionId);
+    const tokenRate = this.tokenRateFor(session);
     return {
       sessionId: session.sessionId,
       persisted: sessionFileExists(session.sessionFile),
@@ -3635,11 +3672,85 @@ export class PiSessionService implements SessionRouteService {
       messageCount: session.messages.length,
       tokens: stats.tokens,
       cost: stats.cost,
+      ...(tokenRate === undefined ? {} : { tokenRate }),
       ...(contextUsage === undefined ? {} : { contextUsage }),
       ...(warnings.length === 0 ? {} : { warnings }),
       ...(pendingAsk === undefined ? {} : { pendingAsk }),
       ...(pendingDialogs.length === 0 ? {} : { pendingDialogs }),
     };
+  }
+
+  /**
+   * Feed the per-session token-rate tracker from raw Pi session events. Called
+   * for every event in the runtime subscription; non-rate events are no-ops.
+   *
+   * `message_start` re-initialises the streaming window and `message_end`
+   * resets it, so abort/interrupt paths need no special cleanup: a next
+   * `message_start` starts a fresh window either way.
+   */
+  private updateTokenRate(session: PiAgentSession, event: unknown): void {
+    const eventType = getString(event, "type");
+    if (eventType === "message_start") {
+      const message = getProperty(event, "message");
+      if (getString(message, "role") !== "assistant") return;
+      const previous = this.tokenRateTrackers.get(session.sessionId);
+      this.tokenRateTrackers.set(session.sessionId, {
+        startedAtMs: undefined,
+        streamedChars: 0,
+        streamedOutputTokens: 0,
+        lastRate: previous?.lastRate,
+      });
+      return;
+    }
+    if (eventType === "message_update") {
+      const assistantMessageEvent = getProperty(event, "assistantMessageEvent");
+      const deltaType = getString(assistantMessageEvent, "type");
+      if (deltaType !== "text_delta" && deltaType !== "thinking_delta") return;
+      const tracker = this.tokenRateTrackers.get(session.sessionId);
+      if (tracker === undefined) return;
+      tracker.streamedChars += getString(assistantMessageEvent, "delta")?.length ?? 0;
+      tracker.startedAtMs ??= Date.now();
+      const usage = getProperty(getProperty(event, "message"), "usage");
+      const output = getNumber(usage, "output");
+      if (output !== undefined && output > 0) tracker.streamedOutputTokens = output;
+      return;
+    }
+    if (eventType === "message_end") {
+      const message = getProperty(event, "message");
+      if (getString(message, "role") !== "assistant") return;
+      const tracker = this.tokenRateTrackers.get(session.sessionId);
+      if (tracker === undefined) return;
+      const startedAtMs = tracker.startedAtMs;
+      if (startedAtMs !== undefined) {
+        const usage = getProperty(message, "usage");
+        const output = getNumber(usage, "output");
+        const tokens = output !== undefined && output > 0 ? output : Math.round(tracker.streamedChars / ESTIMATED_CHARS_PER_TOKEN);
+        const elapsedMs = Date.now() - startedAtMs;
+        if (tokens > 0 && elapsedMs >= MIN_TOKEN_RATE_ELAPSED_MS) tracker.lastRate = tokens / (elapsedMs / 1000);
+      }
+      tracker.startedAtMs = undefined;
+      tracker.streamedChars = 0;
+      tracker.streamedOutputTokens = 0;
+      return;
+    }
+  }
+
+  /**
+   * Tokens/sec for the session's status: live while an assistant message is
+   * streaming (real cumulative usage when the provider reports it, else a
+   * chars/4 estimate), the last completed message's real average rate
+   * otherwise. Undefined until the first measured message.
+   */
+  private tokenRateFor(session: PiAgentSession): number | undefined {
+    const tracker = this.tokenRateTrackers.get(session.sessionId);
+    if (tracker === undefined) return undefined;
+    const startedAtMs = tracker.startedAtMs;
+    if (startedAtMs === undefined) return tracker.lastRate;
+    const elapsedMs = Date.now() - startedAtMs;
+    if (elapsedMs < MIN_TOKEN_RATE_ELAPSED_MS) return undefined;
+    const tokens = tracker.streamedOutputTokens > 0 ? tracker.streamedOutputTokens : Math.round(tracker.streamedChars / ESTIMATED_CHARS_PER_TOKEN);
+    if (tokens <= 0) return undefined;
+    return tokens / (elapsedMs / 1000);
   }
 
   /**
@@ -4283,6 +4394,11 @@ function getString(value: unknown, key: string): string | undefined {
 function getBoolean(value: unknown, key: string): boolean | undefined {
   const property = getProperty(value, key);
   return typeof property === "boolean" ? property : undefined;
+}
+
+function getNumber(value: unknown, key: string): number | undefined {
+  const property = getProperty(value, key);
+  return typeof property === "number" ? property : undefined;
 }
 
 function stringifyPrimitive(value: unknown): string {

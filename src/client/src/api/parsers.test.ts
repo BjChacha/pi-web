@@ -433,6 +433,30 @@ describe("API parsers", () => {
     });
   });
 
+  it("parses the optional token rate when present and omits it otherwise", () => {
+    expect(parseSessionStatus({
+      sessionId: "s1",
+      isStreaming: true,
+      isCompacting: false,
+      isBashRunning: false,
+      pendingMessageCount: 0,
+      queuedMessages: [],
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      cost: 0,
+      tokenRate: 18.4,
+    }).tokenRate).toBe(18.4);
+    expect(parseSessionStatus({
+      sessionId: "s1",
+      isStreaming: true,
+      isCompacting: false,
+      isBashRunning: false,
+      pendingMessageCount: 0,
+      queuedMessages: [],
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      cost: 0,
+    }).tokenRate).toBeUndefined();
+  });
+
   it("parses live session warnings including optional source and path", () => {
     const parsed = parseSessionStatus({
       sessionId: "s1",
