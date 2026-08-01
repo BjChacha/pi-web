@@ -11,6 +11,30 @@ If you make changes that affect `src/server/sessiond.ts`, session runtime owners
 
 Changes to the web/API/UI side generally only require the `pi-web-ui-dev.service` autoreload/restart path.
 
+## Development workflow
+
+Each discrete unit of work — a new feature or an individual bugfix — is its own activity and runs in its own isolated git worktree on its own branch, never directly on `main`. This keeps parallel work, experiments, and rollbacks clean.
+
+### Isolation
+
+- Before starting an activity, create a dedicated worktree on a new branch.
+- Name the branch `<type>/<slug>` (e.g. `feat/thinking-level-bubble`, `fix/windows-tcp-default`), where `<type>` is the Conventional Commit type the closure commit will use (`feat`, `fix`, `docs`, `refactor`, `chore`, ...).
+- One activity per worktree. If a second, unrelated activity comes up mid-work, create a separate worktree for it instead of mixing scopes.
+- Small follow-ups to the in-flight activity (typos, formatting, fixing your own mistakes) stay on the same branch; they are part of the same activity.
+
+### Committing (closure)
+
+- Do not commit mid-task on your own initiative. Commit only after the user explicitly confirms the activity is closed ("done", "looks good, commit it", etc.). Propose the commit; do not assume consent.
+- On closure, run `npm run verify` first and only proceed if it passes. If the change cannot be verified that way (or `verify` is unavailable), say so and proceed only with the user's consent.
+- Write the commit message in Conventional Commit style, matching the existing history (e.g. `feat(sessions): ...`, `fix(dev): ...`).
+- Push the branch to the remote under the same name. Do not open a PR or force-push unless the user explicitly asks.
+- For user-visible changes that ship in the npm package, also add a `.changeset/*.md` fragment — see the `changeset-changelog` skill. This is an existing repo rule, separate from the closure steps above.
+- Leave the working tree clean after closure. Merging or opening a PR is the user's call, not an automatic step.
+
+### Runtime services
+
+Creating, switching, or removing worktrees affects only the autoreloading web/API/UI process (`pi-web-ui-dev.service`). It does not restart or block the long-lived `pi-web-sessiond.service`.
+
 ## Documentation boundaries
 
 `README.md` is a concise landing page and quick start. Keep it focused on what PI WEB is, basic requirements, the shortest supported install path, essential commands, the core model, and links to detailed documentation.
