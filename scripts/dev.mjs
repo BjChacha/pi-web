@@ -42,6 +42,36 @@ const ANSI = useColor
     }
   : { cyan: "", magenta: "", green: "", yellow: "", blue: "", red: "", gray: "", reset: "" };
 
+const SESSIOND_FALLBACK_PORT = "8506";
+const SESSIOND_FALLBACK_URL = `http://127.0.0.1:${SESSIOND_FALLBACK_PORT}`;
+
+function isNonEmpty(value) {
+  return value !== undefined && value !== "";
+}
+
+// Native Windows cannot bind a Unix domain socket at a filesystem path —
+// `listen` fails with EACCES — so sessiond's default socket transport never
+// starts there and the web/API client gets `connect ENOENT`. When running on
+// Windows, default the session daemon and the web/API client to a local TCP
+// port unless the operator already configured both. See docs/config.md
+// (PI_WEB_SESSIOND_PORT / PI_WEB_SESSIOND_URL). This only affects the combined
+// `npm run dev` workflow; split-mode contributors on Windows still set both
+// env vars themselves.
+function sessiondTcpFallback() {
+  if (!isWindows) return null;
+  const portSet = isNonEmpty(process.env["PI_WEB_SESSIOND_PORT"]);
+  const urlSet = isNonEmpty(process.env["PI_WEB_SESSIOND_URL"]);
+  if (portSet && urlSet) return null;
+  if (portSet !== urlSet) {
+    stderr.write(`${ANSI.yellow}[dev] PI_WEB_SESSIOND_PORT and PI_WEB_SESSIOND_URL must be set together; filling in the missing one.${ANSI.reset}\n`);
+  }
+  stdout.write(`${ANSI.gray}[dev] Windows detected: running sessiond over TCP 127.0.0.1:${SESSIOND_FALLBACK_PORT} (Unix domain sockets are not supported on native Windows).${ANSI.reset}\n`);
+  return {
+    "PI_WEB_SESSIOND_PORT": process.env["PI_WEB_SESSIOND_PORT"] || SESSIOND_FALLBACK_PORT,
+    "PI_WEB_SESSIOND_URL": process.env["PI_WEB_SESSIOND_URL"] || SESSIOND_FALLBACK_URL,
+  };
+}
+
 const specs = argv.slice(2);
 if (specs.length === 0) {
   stderr.write(`${ANSI.red}dev: no commands given.${ANSI.reset}\n`);
@@ -128,14 +158,20 @@ function markExited(task, code) {
   }
 }
 
+const sessiondFallback = sessiondTcpFallback();
+const baseSpawnOptions = {
+  stdio: ["ignore", "pipe", "pipe"],
+  shell: true,
+  // POSIX: new process group so -pid reaches grandchildren. Windows relies on
+  // taskkill /T instead and must NOT detach (detaching opens a new console).
+  detached: !isWindows,
+};
+const spawnOptions = sessiondFallback === null
+  ? baseSpawnOptions
+  : { ...baseSpawnOptions, env: { ...process.env, ...sessiondFallback } };
+
 for (const task of tasks) {
-  const child = spawn(task.command, {
-    stdio: ["ignore", "pipe", "pipe"],
-    shell: true,
-    // POSIX: new process group so -pid reaches grandchildren. Windows relies on
-    // taskkill /T instead and must NOT detach (detaching opens a new console).
-    detached: !isWindows,
-  });
+  const child = spawn(task.command, spawnOptions);
   task.child = child;
   attachOutput(task, child.stdout);
   attachOutput(task, child.stderr);
