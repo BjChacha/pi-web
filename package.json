@@ -24,9 +24,9 @@
     "plugin-api/unstable.d.ts"
   ],
   "scripts": {
-    "dev": "bash -c 'trap \"kill 0\" EXIT; npm run dev:sessiond & npm run dev:web & npm run dev:client & wait'",
+    "dev": "node scripts/dev.mjs npm:dev:sessiond npm:dev:web npm:dev:client",
     "dev:sessiond": "tsx watch src/server/sessiond.ts",
-    "dev:web": "bash -c 'set -e; npm run build:plugins; trap \"kill 0\" EXIT; npm run dev:plugins & tsx watch src/server/index.ts & wait'",
+    "dev:web": "npm run build:plugins && node scripts/dev.mjs npm:dev:plugins \"tsx watch src/server/index.ts\"",
     "dev:server": "npm run dev:web",
     "dev:client": "vite --host 0.0.0.0",
     "dev:plugins": "node scripts/build-plugins.mjs --watch",
