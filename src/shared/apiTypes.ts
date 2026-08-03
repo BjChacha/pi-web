@@ -878,6 +878,13 @@ export interface SessionStatus {
    * from the Pi event stream; Pi itself exposes no native rate figure.
    */
   tokenRate?: number;
+  /**
+   * Whether plan mode is active. Plan-mode extensions (official example,
+   * pi-plan-mode, ...) enter the mode by removing write tools (edit/write)
+   * via setActiveTools, so the daemon infers it from the active tool set.
+   * Absent when the daemon cannot determine it (e.g. empty tool set).
+   */
+  planModeActive?: boolean;
   contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null };
   /**
    * Live, runtime-scoped warnings for this session (skill/resource diagnostics,

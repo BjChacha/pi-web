@@ -41,6 +41,31 @@ describe("project unread indicator", () => {
   });
 });
 
+describe("add project button", () => {
+  it("renders an add-project button only when an onAddProject callback is provided", async () => {
+    const list = await mountProjectList([project("project-a")], new Set());
+    expect(list.shadowRoot?.querySelector(".add-project")).toBeNull();
+
+    list.onAddProject = () => undefined;
+    await list.updateComplete;
+
+    const button = list.shadowRoot?.querySelector(".add-project");
+    expect(button).not.toBeNull();
+    expect(button?.getAttribute("aria-label")).toBe("Add project");
+  });
+
+  it("opens the add-project flow when the button is clicked", async () => {
+    const list = await mountProjectList([project("project-a")], new Set());
+    let opened = 0;
+    list.onAddProject = () => { opened += 1; };
+    await list.updateComplete;
+
+    list.shadowRoot?.querySelector<HTMLButtonElement>(".add-project")?.click();
+
+    expect(opened).toBe(1);
+  });
+});
+
 async function mountProjectList(projects: Project[], unreadProjectIds: ReadonlySet<string>): Promise<ProjectList> {
   const list = new ProjectList();
   list.projects = projects;

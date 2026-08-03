@@ -76,7 +76,7 @@ describe("ChatView ask_user transcript records", () => {
     expect(cardRoot.textContent).toContain("Which region?");
     expect(cardRoot.textContent).toContain("Unanswered");
     expect(cardRoot.querySelector("input, textarea, button, select")).toBeNull();
-    expect(view.shadowRoot?.querySelector("article.ask-user-record-shell .msg-header")).toBeNull();
+    expect(view.shadowRoot?.querySelector("article.ask-user-record-shell .msg-identity")).toBeNull();
   });
 });
 

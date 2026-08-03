@@ -84,7 +84,7 @@ describe("selected notification projection", () => {
 
     expect(first.needsRefresh).toBe(false);
     expect(inbox.notifications.map((entry) => entry.id)).toEqual(["daemon-a:2", "daemon-a:1"]);
-    expect(inbox.announcements).toEqual([{ id: "daemon-a:2:daemon-a:2", severity: "warning", message: "notice 2" }]);
+    expect(inbox.announcements).toEqual([{ id: "daemon-a:2:daemon-a:2", notificationId: "daemon-a:2", severity: "warning", message: "notice 2" }]);
     expect(duplicate.changed).toBe(false);
     expect(duplicate.value.announcements).toHaveLength(1);
   });
@@ -116,7 +116,7 @@ describe("selected notification projection", () => {
       ...installSelectedNotificationSnapshot(undefined, target, snapshot()),
       optimisticDismissedIds: ["daemon-a:1"],
       optimisticDismissAllThrough: { order: 99, overflowWatermark: 12 },
-      announcements: [{ id: "old-announcement", severity: "error" as const, message: "old" }],
+      announcements: [{ id: "old-announcement", notificationId: "old", severity: "error" as const, message: "old" }],
     };
     const restarted = installSelectedNotificationSnapshot(current, target, snapshot([notification(1)], { daemonInstanceId: "daemon-b" }));
 
@@ -184,6 +184,7 @@ describe("notification presentation helpers", () => {
   it("keeps live announcements concise and dismiss labels meaningful", () => {
     const announcement: SessionNotificationAnnouncement = {
       id: "daemon-a:2:daemon-a:2",
+      notificationId: "daemon-a:2",
       severity: "error",
       message: "An arbitrarily long extension message that should not be read by the assertive live region",
     };

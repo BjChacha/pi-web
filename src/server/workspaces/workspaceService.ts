@@ -14,9 +14,26 @@ export interface WorkspaceGitPort {
 const realGit: WorkspaceGitPort = { isGitRepository, discoverGitWorktrees };
 
 export class WorkspaceService {
+  private readonly pendingByProject = new Map<string, Promise<Workspace[]>>();
+
   constructor(private readonly git: WorkspaceGitPort = realGit) {}
 
   async list(project: Project): Promise<Workspace[]> {
+    // Collapse concurrent list() calls for the same project into one git
+    // discovery. Browser resume and the app-data refresh routinely request
+    // the same project's workspaces within the same tick, and each discovery
+    // spawns git; sharing the in-flight promise keeps it to one spawn. There
+    // is deliberately no TTL cache: a refresh must always reach git and must
+    // never serve a stale topology (a just-created worktree would otherwise
+    // stay hidden until the TTL expired).
+    const existing = this.pendingByProject.get(project.id);
+    if (existing !== undefined) return existing;
+    const promise = this.discoverWorkspaces(project).finally(() => { this.pendingByProject.delete(project.id); });
+    this.pendingByProject.set(project.id, promise);
+    return promise;
+  }
+
+  private async discoverWorkspaces(project: Project): Promise<Workspace[]> {
     const isGitRepo = await this.git.isGitRepository(project.path);
     if (!isGitRepo) {
       return [this.single(project, false)];

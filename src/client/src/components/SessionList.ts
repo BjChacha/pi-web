@@ -29,6 +29,7 @@ type SessionSelectionScope = "current" | "archived";
 @customElement("session-list")
 export class SessionList extends LitElement implements KeyboardNavigableSection {
   @property({ attribute: false }) sessions: SessionInfo[] = [];
+  @property({ type: Boolean }) isLoading = false;
   @property({ attribute: false }) statuses: Record<string, SessionStatus> = {};
   @property({ attribute: false }) activities: Record<string, SessionActivity> = {};
   @property({ attribute: false }) sending: Record<string, true> = {};
@@ -65,16 +66,27 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
   @property({ attribute: false }) onMarkRead?: (session: SessionInfo) => void;
   @property({ attribute: false }) onMarkReadMany?: (sessions: SessionInfo[]) => void | Promise<void>;
   @property({ attribute: false }) onReload?: (session: SessionInfo) => void;
+  @property({ attribute: false }) onRename?: (session: SessionInfo, name: string) => void;
   @property({ attribute: false }) onCleanup?: () => void;
 
   @state() private openMenuSessionId: string | undefined;
+  @state() private renamingSessionId: string | undefined;
+  @state() private renameValue = "";
+  // Snapshot of the session list taken when inline rename begins, so the live
+  // (modified-time-sorted) list cannot reshuffle rows and tear down the input
+  // mid-edit. Cleared on commit/cancel.
+  @state() private frozenSessions: SessionInfo[] | undefined;
   @state() private menuStyle = "";
   @state() private archivedExpanded = false;
   @state() private selectionScopes: ReadonlySet<SessionSelectionScope> = new Set();
   @state() private selectedSessionIds: ReadonlySet<string> = new Set();
 
   private readonly onDocumentClick = (event: MouseEvent) => {
-    if (event.composedPath().includes(this)) return;
+    if (this.openMenuSessionId === undefined) return;
+    // Dismiss the menu on any click that is not inside the open panel itself —
+    // another row, the heading, or anywhere outside the list. The toggle button
+    // stops propagation and toggles via its own handler, so it never lands here.
+    if (event.composedPath().some((target) => target instanceof HTMLElement && target.classList.contains("action-menu-panel"))) return;
     this.openMenuSessionId = undefined;
   };
 
@@ -91,10 +103,11 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
   protected override updated(changed: PropertyValues<this>): void {
     if (changed.has("sessions")) {
       if (this.openMenuSessionId !== undefined && !this.sessions.some((session) => session.id === this.openMenuSessionId)) this.openMenuSessionId = undefined;
+      if (this.renamingSessionId !== undefined && !this.sessions.some((session) => session.id === this.renamingSessionId)) { this.renamingSessionId = undefined; this.frozenSessions = undefined; }
       if (!this.sessions.some((session) => session.archived === true)) this.archivedExpanded = false;
       this.pruneSelectedSessionIds();
     }
-    if (changed.has("collapsed") && this.collapsed) this.openMenuSessionId = undefined;
+    if (changed.has("collapsed") && this.collapsed) { this.openMenuSessionId = undefined; this.renamingSessionId = undefined; this.frozenSessions = undefined; }
     const previousSelected = changed.get("selected");
     if (changed.has("selected") && this.selected?.archived === true && (previousSelected?.id !== this.selected.id || previousSelected.archived !== true) && !this.archivedExpanded) {
       this.archivedExpanded = true;
@@ -127,11 +140,12 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
   }
 
   override render() {
-    const currentRows = sessionRowsForCurrentTree(this.sessions);
+    const sessions = this.frozenSessions ?? this.sessions;
+    const currentRows = sessionRowsForCurrentTree(sessions);
     const currentRowIds = new Set(currentRows.map((row) => row.session.id));
     const currentSelectableSessions = currentRows.map((row) => row.session).filter((session) => sessionSelectionScope(session) === "current");
-    const archivedRows = sessionRows(this.sessions.filter((session) => session.archived === true && !currentRowIds.has(session.id)));
-    const descendantCounts = unarchivedDescendantCounts(this.sessions);
+    const archivedRows = sessionRows(sessions.filter((session) => session.archived === true && !currentRowIds.has(session.id)));
+    const descendantCounts = unarchivedDescendantCounts(sessions);
     const unreadCount = unreadSessionCount(currentSelectableSessions, this.unreadSessionIds);
     return html`
       <section>
@@ -140,7 +154,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
           <div class="list-body">
             ${this.renderCurrentSelectionToolbar(currentSelectableSessions)}
             ${this.startingCount > 0 ? this.renderStartingSession() : null}
-            ${currentRows.map((row) => this.renderSession(row, descendantCounts.get(row.session.id) ?? 0, "current"))}
+            ${this.isLoading && sessions.length === 0 ? this.renderSkeleton() : currentRows.map((row) => this.renderSession(row, descendantCounts.get(row.session.id) ?? 0, "current"))}
             ${archivedRows.length > 0 ? html`
               ${this.renderArchivedHeading(archivedRows.map((row) => row.session))}
               ${this.archivedExpanded ? html`
@@ -151,6 +165,15 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
           </div>
         `}
       </section>
+    `;
+  }
+
+  private renderSkeleton() {
+    return html`
+      <div class="skeleton-row" aria-hidden="true"></div>
+      <div class="skeleton-row" aria-hidden="true"></div>
+      <div class="skeleton-row" aria-hidden="true"></div>
+      <div class="skeleton-row" aria-hidden="true"></div>
     `;
   }
 
@@ -285,6 +308,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     const canArchive = isArchivableSessionInfo(session, status, persistenceOptions);
     const canDeleteTransient = isTransientNewSessionInfo(session, status, persistenceOptions);
     const canReloadSession = canArchive && this.canReload;
+    const canRename = session.archived !== true && !canDeleteTransient;
     return html`
       <div
         class="action-row ${this.selected?.id === session.id ? "selected" : ""} ${bulkSelected ? "bulk-selected" : ""} ${session.archived === true ? "archived" : ""} ${selectionActive ? "selecting" : ""} ${unread ? "unread" : ""}"
@@ -296,7 +320,9 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
       >
         <div class="action-main ${selectionActive ? "selecting" : ""}">
           ${showsCheckbox ? html`<input class="session-checkbox" type="checkbox" aria-label=${`Select ${sessionLabel(session)}`} .checked=${bulkSelected} @click=${(event: MouseEvent) => { event.stopPropagation(); }} @change=${() => { this.toggleSelected(session.id); }}>` : null}
-          <span class="action-name-line"><span class="action-name" dir="auto">${this.renderRowMarker(row)}${sessionLabel(session)}</span>${this.renderRowBadges(row)}</span><small>${this.renderSessionMetaPrefix(session, status, activity)}${this.renderRelatedSessionsMeta(row)}${String(session.messageCount)} messages</small>
+          <span class="action-name-line">${this.renamingSessionId === session.id
+            ? html`<input class="rename-input" aria-label="Rename session" .value=${this.renameValue} @click=${(event: MouseEvent) => { event.stopPropagation(); }} @input=${(event: InputEvent) => { if (event.target instanceof HTMLInputElement) this.renameValue = event.target.value; }} @keydown=${(event: KeyboardEvent) => { this.handleRenameKeydown(event, session); }} @blur=${() => { this.commitRename(session); }}>`
+            : html`<span class="action-name" dir="auto" @dblclick=${() => { if (canRename) this.startRename(session); }}>${this.renderRowMarker(row)}${sessionLabel(session)}</span>`}${this.renderRowBadges(row)}</span><small>${this.renderSessionMetaPrefix(session, status, activity)}${this.renderRelatedSessionsMeta(row)}${String(session.messageCount)} messages</small>
           ${this.renderActivity(indicatorKind, unread)}
         </div>
         <div class="action-menu">
@@ -312,6 +338,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
                   ? html`<button title="Delete transient new session" @click=${() => { this.openMenuSessionId = undefined; this.onDelete?.(session); }}>Delete</button>`
                   : html`
                     ${this.unreadSessionIds.has(session.id) ? html`<button title="Mark session as read" @click=${() => { this.openMenuSessionId = undefined; this.onMarkRead?.(session); }}>Mark as read</button>` : null}
+                    <button title="Rename session" @click=${() => { this.startRename(session); }}>Rename</button>
                     ${canArchive ? html`
                       <button title="Archive session" @click=${() => { this.openMenuSessionId = undefined; this.onArchive?.(session); }}>Archive</button>
                       ${descendantCount > 0 ? html`<button title="Archive this session and its descendants" @click=${() => { this.openMenuSessionId = undefined; this.confirmArchiveWithDescendants(session, descendantCount); }}>Archive with descendants (${descendantCount})</button>` : null}
@@ -388,6 +415,51 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
       return;
     }
     this.onSelect?.(session);
+  }
+
+  /** Whether an inline rename is in progress, so parents can avoid stealing focus. */
+  get isRenaming(): boolean {
+    return this.renamingSessionId !== undefined;
+  }
+
+  private startRename(session: SessionInfo): void {
+    this.openMenuSessionId = undefined;
+    this.renamingSessionId = session.id;
+    this.renameValue = session.name ?? "";
+    this.frozenSessions = this.sessions;
+    void this.updateComplete.then(() => {
+      const input = this.renderRoot.querySelector<HTMLInputElement>(".rename-input");
+      input?.focus();
+      input?.select();
+    });
+  }
+
+  private handleRenameKeydown(event: KeyboardEvent, session: SessionInfo): void {
+    // Keep all keystrokes inside the rename field so row/section keyboard
+    // navigation cannot hijack editing or steal focus mid-rename.
+    event.stopPropagation();
+    if (event.key === "Enter") {
+      event.preventDefault();
+      this.commitRename(session);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      this.cancelRename();
+    }
+  }
+
+  private commitRename(session: SessionInfo): void {
+    // Blur fires again when the input is torn down after Enter/Escape already
+    // cleared the renaming id, so guard against that re-entrancy.
+    if (this.renamingSessionId === undefined) return;
+    const trimmed = this.renameValue.trim();
+    this.renamingSessionId = undefined;
+    this.frozenSessions = undefined;
+    if (trimmed !== "" && trimmed !== session.name) this.onRename?.(session, trimmed);
+  }
+
+  private cancelRename(): void {
+    this.renamingSessionId = undefined;
+    this.frozenSessions = undefined;
   }
 
   private confirmArchiveWithDescendants(session: SessionInfo, descendantCount: number): void {
@@ -525,6 +597,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     .plain-heading { min-width: 0; }
     .action-name-line { min-width: 0; display: flex; align-items: flex-start; gap: 6px; }
     .action-name-line .action-name { flex: 1 1 auto; min-width: 0; }
+    .rename-input { flex: 1 1 auto; min-width: 0; box-sizing: border-box; font: inherit; line-height: 1.25; color: inherit; background: var(--pi-surface); border: 1px solid var(--pi-accent); border-radius: 4px; padding: 1px 4px; outline: none; }
     /* Badges must not sit inside the line-clamped title, or a long name hides them entirely. */
     .row-badges { flex: 0 0 auto; display: flex; align-items: flex-start; gap: 4px; }
     .row-badges .badge { margin-left: 0; white-space: nowrap; }

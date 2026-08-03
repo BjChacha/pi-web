@@ -10,7 +10,6 @@ import {
   extensionDialogCountdownText,
   type ExtensionDialogAnswerCallback,
   type ExtensionDialogCancelCallback,
-  type ExtensionDialogDismissCallback,
 } from "./ExtensionDialogCard";
 
 afterEach(() => {
@@ -187,11 +186,9 @@ describe("extension-dialog-card countdown", () => {
 });
 
 describe("extension-dialog-card closed outcome", () => {
-  it("shows the given answer and dismisses through the dismiss control", async () => {
-    const onDismiss = vi.fn<ExtensionDialogDismissCallback>();
+  it("shows the given answer as a read-only outcome", async () => {
     const card = new ExtensionDialogCard();
     card.outcome = closedDialog("answered", true);
-    card.onDismiss = onDismiss;
     document.body.append(card);
     await card.updateComplete;
     const root = renderRoot(card);
@@ -200,9 +197,8 @@ describe("extension-dialog-card closed outcome", () => {
     expect(root.querySelector(".closed-summary")?.textContent).toBe("Answered: Yes");
     expect(root.querySelector("input, select, textarea")).toBeNull();
     expect(buttonsWithText(root, "Yes")).toHaveLength(0);
-
-    buttonWithText(root, "Dismiss").click();
-    expect(onDismiss).toHaveBeenCalledWith("dlg-1");
+    // Closed outcomes are inline transcript history and cannot be dismissed.
+    expect(root.querySelector("button")).toBeNull();
   });
 
   it("shows the timeout outcome without an answer", async () => {

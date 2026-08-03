@@ -15,6 +15,7 @@ import { ProjectActivityOwnershipCoordinator } from "../controllers/projectActiv
 import { PiWebStatusController } from "../controllers/piWebStatusController";
 import { SessionController } from "../controllers/sessionController";
 import { SessionNotificationController } from "../controllers/sessionNotificationController";
+import { SessionTabsController } from "../controllers/sessionTabsController";
 import { WorkspaceController, canDeleteWorkspace } from "../controllers/workspaceController";
 import { emptyMachineNavigationSnapshot, machineNavigationSnapshotFromState, routeFromMachineNavigationSnapshot, SessionStorageMachineNavigationMemory, type MachineNavigationSnapshot, type WorkspaceRouteSurface } from "../controllers/machineNavigationMemory";
 import { SessionStorageSessionSelectionMemory } from "../controllers/sessionSelection";
@@ -24,6 +25,7 @@ import { KeyboardShortcutDispatcher } from "../keyboardShortcuts";
 import { selectedMachineId } from "../controllers/types";
 import { machineSessionKey } from "../machineKeys";
 import { resolveParentSessionLocation, type ParentSessionLocation } from "../parentSessionLocation";
+import { isActiveTab, sessionTabKey, sessionTabStatusKind, sessionTabsForMachine, tabKey, type SessionTab, type SessionTabStatusKind } from "../sessionTabs";
 import { sessionCleanupRequestKey, sessionCleanupUnavailableMessage } from "../sessionCleanupUi";
 import { selectedNotificationView } from "../sessionNotifications";
 import { hasAuthoritativeSessionPersistence as runtimeHasAuthoritativeSessionPersistence } from "../sessionPersistence";
@@ -75,6 +77,7 @@ import type { AppMobileMainTab, AppMobileMainTabIcon } from "./appShell/AppMobil
 import { shouldShowMachinesSection, type AppNavigationPanel, type NavigationFocusTarget } from "./appShell/AppNavigationPanel";
 import "./appShell/AppPanelEdgeControl";
 import "./appShell/AppRefreshControl";
+import "./appShell/AppSessionTabs";
 import { appStyles } from "./shared";
 
 
@@ -132,6 +135,7 @@ export class PiWebApp extends LitElement {
     (patch) => { this.setState(patch); },
     { onBackgroundError: (message, error) => { console.warn(message, error); } },
   );
+  private readonly sessionTabs = new SessionTabsController(this);
   private readonly sessions = new SessionController(
     () => this.state,
     (patch) => { this.setState(patch); },
@@ -140,7 +144,12 @@ export class PiWebApp extends LitElement {
     {
       notifications: this.notifications,
       onSelectedSessionReady: ({ machineId, session }) => {
+        this.recordVisitedSession(machineId, session);
         void this.commitReadyChatAfterRender(machineId, session);
+      },
+      onSessionInfoChanged: (session) => { this.refreshSessionTab(session); },
+      onSessionRemoved: (sessionIds, machineId) => {
+        this.sessionTabs.forget(sessionIds.map((id) => sessionTabKey(machineId, id)));
       },
       replacePromptEditorText: async ({ machineId, sessionId, text }) => {
         await this.updateComplete;
@@ -967,7 +976,7 @@ export class PiWebApp extends LitElement {
     if (!this.unreadConnected) return;
     const machineIds = new Set(this.state.machines.map((machine) => machine.id));
     machineIds.add(selectedMachineId(this.state));
-    await Promise.all([...machineIds].map(async (machineId) => { await this.renegotiateUnreadMachine(machineId); }));
+    await Promise.all([...machineIds].map((machineId) => this.renegotiateUnreadMachine(machineId)));
   }
 
   private renegotiateUnreadMachine(machineId: string): Promise<void> {
@@ -1337,9 +1346,11 @@ export class PiWebApp extends LitElement {
         .workspaceActivities=${this.state.workspaceActivities}
         .workspacesByProjectId=${this.state.workspacesByProjectId}
         .workspaces=${this.state.workspaces}
+        .isLoadingWorkspaces=${this.state.isLoadingWorkspaces}
         .selectedWorkspace=${this.state.selectedWorkspace}
         .deletingWorkspaceIds=${pendingWorkspaceDeletionIds(this.state.workspaceDeletionRuns)}
         .sessions=${this.state.sessions}
+        .isLoadingSessions=${this.state.isLoadingSessions}
         .sessionStatuses=${this.state.sessionStatuses}
         .sessionActivities=${this.state.sessionActivities}
         .sendingPrompts=${this.state.sendingPrompts}
@@ -1363,6 +1374,7 @@ export class PiWebApp extends LitElement {
         .refreshControl=${this.appShell.shouldShowAppRefreshInHeader() ? this.renderAppRefresh() : undefined}
         .onShowActions=${() => { this.setState({ actionPaletteOpen: true }); }}
         .onToggleProjects=${() => { this.navigationSections.toggle("projects"); }}
+        .onAddProject=${() => { this.setState({ projectDialogOpen: true }); }}
         .onToggleWorkspaces=${() => { this.navigationSections.toggle("workspaces"); }}
         .onToggleSessions=${() => { this.navigationSections.toggle("sessions"); }}
         .onSelectProject=${(project: Project) => this.selectNavigationItem("projects", "workspaces", () => this.workspaces.selectProject(project))}
@@ -1383,8 +1395,9 @@ export class PiWebApp extends LitElement {
         .onDeleteArchivedSessions=${(sessions: SessionInfo[]) => this.sessions.deleteArchivedSessions(sessions)}
         .onDetachParentSession=${(session: SessionInfo) => this.sessions.detachParent(session)}
         .parentSessionLocation=${this.parentSessionLocationFor}
-        .onGoToParentSession=${(session: SessionInfo, location: ParentSessionLocation) => this.goToParentSession(location)}
+        .onGoToParentSession=${(_session: SessionInfo, location: ParentSessionLocation) => this.goToParentSession(location)}
         .onReloadSession=${(session: SessionInfo) => this.sessions.reloadSession(session)}
+        .onRenameSession=${(session: SessionInfo, name: string) => this.sessions.renameSession(session, name)}
         .onCleanupSessions=${() => { this.openSessionCleanupDialog(); }}
         .onFocusNavigationTarget=${(target: NavigationFocusTarget) => { void this.focusNavigationTarget(target); }}
         .onCancelKeyboardNavigation=${() => { void this.focusChatComposer(); }}
@@ -1482,6 +1495,9 @@ export class PiWebApp extends LitElement {
     if (this.state.mainView !== "chat") this.selectMainView("chat");
     await this.updateComplete;
     await nextFrame();
+    // Inline session rename holds its own focus; don't reclaim it for the chat
+    // after a session selection that the double-click also kicked off.
+    if (this.navigationPanel?.sessionListRenaming === true) return;
     this.promptEditor?.focusInput();
   }
 
@@ -2151,10 +2167,6 @@ export class PiWebApp extends LitElement {
 
   private readonly handleCancelDialog = (dialogId: string): Promise<void> => this.sessions.cancelDialog(dialogId);
 
-  private readonly handleDismissClosedDialog = (dialogId: string): void => {
-    this.sessions.dismissClosedDialog(dialogId);
-  };
-
   private readonly handleDismissNotification = (notificationId: string): void => {
     void this.notifications.dismissNotification(notificationId);
   };
@@ -2184,7 +2196,7 @@ export class PiWebApp extends LitElement {
 
   private renderChatView(state: AppState, session: SessionInfo) {
     return html`
-      <chat-view .sessionId=${session.id} .messages=${state.messages} .messageStart=${state.messagePageStart} .messageEnd=${state.messagePageEnd} .messageTotal=${state.messagePageTotal} .hasMore=${state.messagePageStart > 0} .loadingMore=${state.isLoadingEarlierMessages} .isSendingPrompt=${state.sendingPrompts[session.id] === true} .isCompacting=${state.status?.isCompacting === true} .pendingMessageCount=${state.status?.pendingMessageCount ?? 0} .clientQueuedMessages=${state.clientQueuedSessionMessages[session.id] ?? []} .status=${state.status} .activity=${state.activity} .pendingAsk=${state.pendingAsk} .pendingDialogs=${state.pendingDialogs} .closedDialogs=${state.closedDialogs} .onAnswerDialog=${this.handleAnswerDialog} .onCancelDialog=${this.handleCancelDialog} .onDismissClosedDialog=${this.handleDismissClosedDialog} .askDraftSessionId=${machineSessionKey(selectedMachineId(state), session.id)} .onSubmitAsk=${this.handleSubmitAsk} .notificationInbox=${selectedNotificationView(state.selectedNotificationInbox)} .canClearServerQueue=${this.canClearServerQueue()} .onClearServerQueue=${this.handleClearServerQueue} .onDismissWarning=${this.handleDismissWarning} .onDismissNotification=${this.handleDismissNotification} .onDismissAllNotifications=${this.handleDismissAllNotifications} .warningsVisible=${!this.sessionWarningVisibility.collapsed} .onToggleWarnings=${this.handleToggleWarnings} .onLoadMore=${() => this.withChatPrependTransition(() => this.sessions.loadEarlierMessages())}></chat-view>
+      <chat-view .sessionId=${session.id} .messages=${state.messages} .messageStart=${state.messagePageStart} .messageEnd=${state.messagePageEnd} .messageTotal=${state.messagePageTotal} .hasMore=${state.messagePageStart > 0} .loadingMore=${state.isLoadingEarlierMessages} .isSendingPrompt=${state.sendingPrompts[session.id] === true} .isCompacting=${state.status?.isCompacting === true} .pendingMessageCount=${state.status?.pendingMessageCount ?? 0} .clientQueuedMessages=${state.clientQueuedSessionMessages[session.id] ?? []} .status=${state.status} .activity=${state.activity} .pendingAsk=${state.pendingAsk} .pendingDialogs=${state.pendingDialogs} .onAnswerDialog=${this.handleAnswerDialog} .onCancelDialog=${this.handleCancelDialog} .askDraftSessionId=${machineSessionKey(selectedMachineId(state), session.id)} .onSubmitAsk=${this.handleSubmitAsk} .notificationInbox=${selectedNotificationView(state.selectedNotificationInbox)} .canClearServerQueue=${this.canClearServerQueue()} .onClearServerQueue=${this.handleClearServerQueue} .onDismissWarning=${this.handleDismissWarning} .onDismissNotification=${this.handleDismissNotification} .onDismissAllNotifications=${this.handleDismissAllNotifications} .warningsVisible=${!this.sessionWarningVisibility.collapsed} .onToggleWarnings=${this.handleToggleWarnings} .onLoadMore=${() => this.withChatPrependTransition(() => this.sessions.loadEarlierMessages())}></chat-view>
     `;
   }
 
@@ -2209,6 +2221,91 @@ export class PiWebApp extends LitElement {
         .onShowActions=${() => { this.setState({ actionPaletteOpen: true }); }}
       ></app-context-bar>
     `;
+  }
+
+  private renderSessionTabs() {
+    if (this.appShell.isMobileNavigationLayout) return null;
+    const tabs = sessionTabsForMachine(this.sessionTabs.allTabs(), selectedMachineId(this.state));
+    if (tabs.length === 0) return null;
+    return html`
+      <app-session-tabs
+        .tabs=${tabs}
+        .activeKey=${this.activeSessionTabKey()}
+        .statusByTab=${this.sessionTabStatusKinds(tabs)}
+        .onActivate=${(tab: SessionTab) => { void this.activateSessionTab(tab); }}
+        .onClose=${(key: string) => { this.sessionTabs.close(key); }}
+        .onTogglePin=${(key: string) => { this.sessionTabs.togglePin(key); }}
+        .onReorder=${(fromKey: string, targetKey?: string) => { this.sessionTabs.reorder(fromKey, targetKey); }}
+      ></app-session-tabs>
+    `;
+  }
+
+  private sessionTabStatusKinds(tabs: readonly SessionTab[]): Map<string, SessionTabStatusKind> {
+    const kinds = new Map<string, SessionTabStatusKind>();
+    for (const tab of tabs) {
+      const kind = sessionTabStatusKind(
+        this.state.sessionStatuses[tab.sessionId],
+        this.state.sessionActivities[tab.sessionId],
+        this.unreadSessionIds.has(tab.sessionId),
+      );
+      if (kind !== undefined) kinds.set(tabKey(tab), kind);
+    }
+    return kinds;
+  }
+
+  private activeSessionTabKey(): string | undefined {
+    const session = this.state.selectedSession;
+    return session === undefined ? undefined : sessionTabKey(selectedMachineId(this.state), session.id);
+  }
+
+  private recordVisitedSession(machineId: string, session: SessionInfo): void {
+    if (selectedMachineId(this.state) !== machineId) return;
+    // onSelectedSessionReady fires after selectWorkspace/selectProject have
+    // already settled the selection, so the current workspace and project is
+    // this session's own. Reading them directly avoids a cwd-to-workspace path
+    // match, which is fragile across path separators and casing on Windows.
+    const workspace = this.state.selectedWorkspace;
+    const project = this.state.selectedProject;
+    if (workspace === undefined || project === undefined) return;
+    this.sessionTabs.record(machineId, session, {
+      projectId: project.id,
+      workspaceId: workspace.id,
+      projectLabel: project.name,
+    });
+  }
+
+  /**
+   * Refresh a tab's snapshot when its session info changes (e.g. a rename),
+   * reusing the same `session.name` event the session list does. Only an
+   * already-visited tab is touched; its project/workspace target is kept and
+   * only the title snapshot is rebuilt. Append ordering means this never moves
+   * the tab.
+   */
+  private refreshSessionTab(session: SessionInfo): void {
+    const machineId = selectedMachineId(this.state);
+    const existing = this.sessionTabs.allTabs().find((tab) => tab.machineId === machineId && tab.sessionId === session.id);
+    if (existing === undefined) return;
+    this.sessionTabs.record(machineId, session, {
+      projectId: existing.projectId,
+      workspaceId: existing.workspaceId,
+      projectLabel: existing.projectLabel,
+    });
+  }
+
+  /**
+   * Restore the selection a visited-session tab points at. This is the same
+   * deep-route restoration the URL path uses, so a cross-machine/project/
+   * workspace tab reuses the existing machine switch, project load, and
+   * workspace/session resolution instead of bespoke orchestration.
+   */
+  private async activateSessionTab(tab: SessionTab): Promise<void> {
+    if (isActiveTab(tab, selectedMachineId(this.state), this.state.selectedSession?.id)) return;
+    await this.restoreRouteFor(
+      { machineId: tab.machineId, projectId: tab.projectId, workspaceId: tab.workspaceId, sessionId: tab.sessionId, tool: undefined, view: "chat" },
+      true,
+      emptyWorkspaceRouteSurface(),
+      "chat",
+    );
   }
 
   private renderMobileMainTabs() {
@@ -2256,6 +2353,7 @@ export class PiWebApp extends LitElement {
         ${this.renderNavigationPanelEdgeControl()}
         <main class=${mainViewClass(state.mainView)}>
           ${this.renderContextBar()}
+          ${this.renderSessionTabs()}
           ${this.renderMobileMainTabs()}
           ${state.error ? html`<div class="error">${state.error}</div>` : null}
           <div class="mobile-navigation-panel">${this.appShell.isMobileNavigationLayout ? this.renderNavigationPanel() : null}</div>

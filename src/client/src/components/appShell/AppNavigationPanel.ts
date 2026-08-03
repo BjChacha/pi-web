@@ -11,7 +11,7 @@ import "../MachineList";
 import "../MachineSwitcher";
 import "../ProjectList";
 import "../WorkspaceList";
-import "../SessionList";
+import { SessionList } from "../SessionList";
 
 export type NavigationFocusTarget = NavigationSection | "chat";
 
@@ -24,8 +24,10 @@ export class AppNavigationPanel extends LitElement {
   @property({ attribute: false }) projects: Project[] = [];
   @property({ attribute: false }) selectedProject?: Project;
   @property({ attribute: false }) workspaces: Workspace[] = [];
+  @property({ type: Boolean }) isLoadingWorkspaces = false;
   @property({ attribute: false }) selectedWorkspace?: Workspace;
   @property({ attribute: false }) sessions: SessionInfo[] = [];
+  @property({ type: Boolean }) isLoadingSessions = false;
   @property({ attribute: false }) selectedSession?: SessionInfo;
   @property({ attribute: false }) workspaceActivities: Record<string, WorkspaceActivity> = {};
   @property({ attribute: false }) sessionActivities: Record<string, SessionActivity> = {};
@@ -54,6 +56,7 @@ export class AppNavigationPanel extends LitElement {
   @property({ attribute: false }) onShowActions?: () => void;
   @property({ attribute: false }) onToggleMachines?: () => void;
   @property({ attribute: false }) onToggleProjects?: () => void;
+  @property({ attribute: false }) onAddProject?: () => void;
   @property({ attribute: false }) onToggleWorkspaces?: () => void;
   @property({ attribute: false }) onToggleSessions?: () => void;
   @property({ attribute: false }) onSelectProject?: (project: Project) => void | Promise<void>;
@@ -75,6 +78,7 @@ export class AppNavigationPanel extends LitElement {
   @property({ attribute: false }) onMarkSessionRead?: (session: SessionInfo) => void | Promise<void>;
   @property({ attribute: false }) onMarkSessionsRead?: (sessions: SessionInfo[]) => void | Promise<void>;
   @property({ attribute: false }) onReloadSession?: (session: SessionInfo) => void | Promise<void>;
+  @property({ attribute: false }) onRenameSession?: (session: SessionInfo, name: string) => void | Promise<void>;
   @property({ attribute: false }) onCleanupSessions?: () => void | Promise<void>;
   @property({ attribute: false }) onArchivedCollapsed?: () => void | Promise<void>;
   @property({ attribute: false }) onSelectMachine?: (machine: Machine) => void | Promise<void>;
@@ -86,7 +90,12 @@ export class AppNavigationPanel extends LitElement {
   @query("machine-switcher") private machineSwitcher?: KeyboardNavigableSection;
   @query("project-list") private projectList?: KeyboardNavigableSection;
   @query("workspace-list") private workspaceList?: KeyboardNavigableSection;
-  @query("session-list") private sessionList?: KeyboardNavigableSection;
+  @query("session-list") private sessionList?: SessionList;
+
+  /** Whether the session list is currently editing a name inline. */
+  get sessionListRenaming(): boolean {
+    return this.sessionList?.isRenaming === true;
+  }
 
   async focusSection(section: NavigationSection): Promise<boolean> {
     await this.updateComplete;
@@ -145,6 +154,7 @@ export class AppNavigationPanel extends LitElement {
         .collapsible=${this.collapsible}
         .collapsed=${this.projectsCollapsed}
         .onToggleCollapsed=${() => { this.onToggleProjects?.(); }}
+        .onAddProject=${() => { this.onAddProject?.(); }}
         .onSelect=${(project: Project) => this.onSelectProject?.(project)}
         .onClose=${(project: Project) => this.onCloseProject?.(project)}
         .onFocusPreviousSection=${() => { this.focusPreviousFrom("projects"); }}
@@ -153,6 +163,7 @@ export class AppNavigationPanel extends LitElement {
       ></project-list>
       <workspace-list
         .workspaces=${this.workspaces}
+        .isLoading=${this.isLoadingWorkspaces}
         .selected=${this.selectedWorkspace}
         .activities=${this.workspaceActivities}
         .deletingWorkspaceIds=${this.deletingWorkspaceIds}
@@ -169,6 +180,7 @@ export class AppNavigationPanel extends LitElement {
       ></workspace-list>
       <session-list
         .sessions=${this.sessions}
+        .isLoading=${this.isLoadingSessions}
         .statuses=${this.sessionStatuses}
         .activities=${this.sessionActivities}
         .sending=${this.sendingPrompts}
@@ -201,6 +213,7 @@ export class AppNavigationPanel extends LitElement {
         .onMarkRead=${(session: SessionInfo) => this.onMarkSessionRead?.(session)}
         .onMarkReadMany=${(sessions: SessionInfo[]) => this.onMarkSessionsRead?.(sessions)}
         .onReload=${(session: SessionInfo) => this.onReloadSession?.(session)}
+        .onRename=${(session: SessionInfo, name: string) => this.onRenameSession?.(session, name)}
         .onCleanup=${() => this.onCleanupSessions?.()}
         .onFocusPreviousSection=${() => { this.focusPreviousFrom("sessions"); }}
         .onFocusNextSection=${() => { this.focusNextFrom("sessions"); }}

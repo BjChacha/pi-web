@@ -1,8 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { initialAppState } from "../appState";
 import type { ExtensionDialogCloseResponse, ExtensionDialogKind, PendingExtensionDialog } from "../api";
+import type { ChatLine } from "../components/shared";
 import { SessionController } from "./sessionController";
 import { defaultApi, EmitSocket, emptyPage, FakeSocket, oldSession, status, workspace, type AppState, type SessionStatus } from "./sessionController.testSupport";
+
+type ExtensionDialogRecord = Extract<ChatLine["parts"][number], { type: "extensionDialogRecord" }>;
+
+/** Closed extension-dialog outcomes are appended to the transcript as records. */
+function closedDialogRecords(messages: ChatLine[]): { dialog: PendingExtensionDialog; reason: ExtensionDialogRecord["reason"]; answer?: ExtensionDialogRecord["answer"] }[] {
+  return messages.flatMap((message) => message.parts.filter((part): part is ExtensionDialogRecord => part.type === "extensionDialogRecord").map((part) => ({
+    dialog: part.dialog,
+    reason: part.reason,
+    ...(part.answer === undefined ? {} : { answer: part.answer }),
+  })));
+}
 
 function dialog(dialogId: string, kind: ExtensionDialogKind = "confirm"): PendingExtensionDialog {
   return {
@@ -82,7 +94,7 @@ describe("SessionController extension dialog state", () => {
     const harness = await liveSession({}, statusWithDialogs(oldSession.id, pending));
 
     expect(harness.state().pendingDialogs).toEqual(pending);
-    expect(harness.state().closedDialogs).toEqual([]);
+    expect(closedDialogRecords(harness.state().messages)).toEqual([]);
   });
 
   it("opens and closes cards from live dialog events without superseding other dialogs", async () => {
@@ -96,13 +108,13 @@ describe("SessionController extension dialog state", () => {
     expect(harness.state().pendingDialogs.map((pending) => pending.dialogId)).toEqual(["dialog-2"]);
   });
 
-  it("keeps the closed dialog's outcome so the card can render what happened", async () => {
+  it("appends the closed dialog's outcome to the transcript so the card can render what happened", async () => {
     const harness = await liveSession();
 
     harness.socket.emit({ type: "dialog.opened", dialog: dialog("dialog-1", "select") });
     harness.socket.emit({ type: "dialog.closed", dialogId: "dialog-1", reason: "answered", answer: "SQLite" });
 
-    expect(harness.state().closedDialogs).toEqual([{ dialog: dialog("dialog-1", "select"), reason: "answered", answer: "SQLite" }]);
+    expect(closedDialogRecords(harness.state().messages)).toEqual([{ dialog: dialog("dialog-1", "select"), reason: "answered", answer: "SQLite" }]);
   });
 
   it("records a close without an answer for cancel-like reasons", async () => {
@@ -111,7 +123,7 @@ describe("SessionController extension dialog state", () => {
     harness.socket.emit({ type: "dialog.opened", dialog: dialog("dialog-1") });
     harness.socket.emit({ type: "dialog.closed", dialogId: "dialog-1", reason: "aborted" });
 
-    expect(harness.state().closedDialogs).toEqual([{ dialog: dialog("dialog-1"), reason: "aborted" }]);
+    expect(closedDialogRecords(harness.state().messages)).toEqual([{ dialog: dialog("dialog-1"), reason: "aborted" }]);
   });
 
   it("ignores a close for a dialog that is not on screen", async () => {
@@ -121,7 +133,7 @@ describe("SessionController extension dialog state", () => {
     harness.socket.emit({ type: "dialog.closed", dialogId: "dialog-1", reason: "cancelled" });
 
     expect(harness.state().pendingDialogs.map((pending) => pending.dialogId)).toEqual(["dialog-2"]);
-    expect(harness.state().closedDialogs).toEqual([]);
+    expect(closedDialogRecords(harness.state().messages)).toEqual([]);
   });
 
   it("does not duplicate a card when the open frame is already reflected", async () => {
@@ -130,6 +142,18 @@ describe("SessionController extension dialog state", () => {
     harness.socket.emit({ type: "dialog.opened", dialog: dialog("dialog-1") });
 
     expect(harness.state().pendingDialogs).toHaveLength(1);
+  });
+
+  it("does not duplicate a closed dialog's transcript record", async () => {
+    const harness = await liveSession();
+
+    harness.socket.emit({ type: "dialog.opened", dialog: dialog("dialog-1") });
+    harness.socket.emit({ type: "dialog.closed", dialogId: "dialog-1", reason: "answered", answer: true });
+    // The answering browser's own close lands first; the daemon's dialog.closed
+    // event must not append the record a second time.
+    harness.socket.emit({ type: "dialog.closed", dialogId: "dialog-1", reason: "answered", answer: true });
+
+    expect(closedDialogRecords(harness.state().messages)).toHaveLength(1);
   });
 
   it("applies a status that no longer carries a dialog as the authoritative close", async () => {
@@ -149,30 +173,34 @@ describe("SessionController extension dialog state", () => {
     expect(harness.state().pendingDialogs).toEqual([]);
   });
 
-  it("clears open and closed dialogs when the session is deselected", async () => {
+  it("clears dialog records from the transcript when the session is deselected", async () => {
     const harness = await liveSession({}, statusWithDialogs(oldSession.id, [dialog("dialog-1"), dialog("dialog-2")]));
     harness.socket.emit({ type: "dialog.closed", dialogId: "dialog-1", reason: "cancelled" });
-    expect(harness.state().closedDialogs).toHaveLength(1);
+    expect(closedDialogRecords(harness.state().messages)).toHaveLength(1);
 
     harness.controller.deselectSession({ updateUrl: false });
 
     expect(harness.state().pendingDialogs).toEqual([]);
-    expect(harness.state().closedDialogs).toEqual([]);
+    expect(closedDialogRecords(harness.state().messages)).toEqual([]);
   });
 
-  it("drops a closed dialog's outcome card when it is dismissed", async () => {
+  it("preserves dialog records across a transcript refresh", async () => {
     const harness = await liveSession({}, statusWithDialogs(oldSession.id, [dialog("dialog-1")]));
-    harness.socket.emit({ type: "dialog.closed", dialogId: "dialog-1", reason: "timeout" });
-    expect(harness.state().closedDialogs).toHaveLength(1);
+    harness.socket.emit({ type: "dialog.closed", dialogId: "dialog-1", reason: "answered", answer: true });
+    expect(closedDialogRecords(harness.state().messages)).toHaveLength(1);
+    const beforeRefresh = harness.state().messages;
 
-    harness.controller.dismissClosedDialog("dialog-1");
+    await harness.controller.refreshSelectedSession(oldSession.id);
 
-    expect(harness.state().closedDialogs).toEqual([]);
+    // A refresh rebuilds the transcript from the daemon page; the local dialog
+    // record must be re-applied so it is not lost mid-session.
+    expect(closedDialogRecords(harness.state().messages)).toHaveLength(1);
+    expect(harness.state().messages).not.toBe(beforeRefresh);
   });
 });
 
 describe("SessionController extension dialog answers", () => {
-  it("answers a dialog, records the outcome, and applies the returned status", async () => {
+  it("answers a dialog, records the outcome in the transcript, and applies the returned status", async () => {
     const answerCalls: { dialogId: string; value: unknown; machineId: string }[] = [];
     const closedStatus = status(oldSession.id);
     let state = selectedState({ status: statusWithDialogs(oldSession.id, [dialog("dialog-1")]), pendingDialogs: [dialog("dialog-1")] });
@@ -194,7 +222,7 @@ describe("SessionController extension dialog answers", () => {
     await controller.answerDialog("dialog-1", true);
 
     expect(answerCalls).toEqual([{ dialogId: "dialog-1", value: true, machineId: "local" }]);
-    expect(state.closedDialogs).toEqual([{ dialog: dialog("dialog-1"), reason: "answered", answer: true }]);
+    expect(closedDialogRecords(state.messages)).toEqual([{ dialog: dialog("dialog-1"), reason: "answered", answer: true }]);
     expect(state.pendingDialogs).toEqual([]);
     expect(state.status).toEqual(closedStatus);
   });
@@ -224,11 +252,11 @@ describe("SessionController extension dialog answers", () => {
     await controller.cancelDialog("dialog-1");
 
     expect(cancelCalls).toEqual(["dialog-1"]);
-    expect(state.closedDialogs).toEqual([{ dialog: dialog("dialog-1"), reason: "cancelled" }]);
+    expect(closedDialogRecords(state.messages)).toEqual([{ dialog: dialog("dialog-1"), reason: "cancelled" }]);
     expect(state.pendingDialogs).toEqual([]);
   });
 
-  it("trusts the status of a stale close without an error or an outcome card", async () => {
+  it("trusts the status of a stale close without an error or an outcome record", async () => {
     let state = selectedState({ pendingDialogs: [dialog("dialog-1")] });
     const api: typeof defaultApi = {
       ...defaultApi,
@@ -245,7 +273,7 @@ describe("SessionController extension dialog answers", () => {
     await controller.answerDialog("dialog-1", true);
 
     expect(state.error).toBe("");
-    expect(state.closedDialogs).toEqual([]);
+    expect(closedDialogRecords(state.messages)).toEqual([]);
     expect(state.pendingDialogs.map((pending) => pending.dialogId)).toEqual(["dialog-2"]);
   });
 
@@ -264,7 +292,7 @@ describe("SessionController extension dialog answers", () => {
 
     expect(state.error).toBe("Error: answer failed");
     expect(state.pendingDialogs.map((pending) => pending.dialogId)).toEqual(["dialog-1"]);
-    expect(state.closedDialogs).toEqual([]);
+    expect(closedDialogRecords(state.messages)).toEqual([]);
   });
 
   it("does not answer for an archived session", async () => {

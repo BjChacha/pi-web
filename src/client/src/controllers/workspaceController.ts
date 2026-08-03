@@ -1,4 +1,4 @@
-import { api as defaultApi, type Project, type Workspace } from "../api";
+import { api as defaultApi, type Project, type SessionInfo, type Workspace } from "../api";
 import { resetWorkspaceScopedState, type AppState } from "../appState";
 import { mergeCachedNewSessions } from "../cachedNewSessions";
 import { machineProjectKey } from "../machineKeys";
@@ -16,6 +16,7 @@ export class WorkspaceController {
   private readonly api: Pick<typeof defaultApi, "sessions" | "workspaces">;
   private readonly onBackgroundError: (message: string, error: unknown) => void;
   private readonly topologyRefreshes = new TrailingRefreshCoordinator<string>();
+  private readonly sessionRefreshes = new TrailingRefreshCoordinator<string>();
 
   constructor(
     private readonly getState: GetState,
@@ -31,27 +32,58 @@ export class WorkspaceController {
 
   clearSelection(options?: { updateUrl?: boolean | undefined }) {
     this.sessions.clearActiveSession();
-    this.setState({ selectedProject: undefined, selectedWorkspace: undefined, workspaces: [], isLoadingWorkspaces: false, ...resetWorkspaceScopedState() });
+    this.setState({ selectedProject: undefined, selectedWorkspace: undefined, workspaces: [], isLoadingWorkspaces: false, isLoadingSessions: false, ...resetWorkspaceScopedState() });
     if (options?.updateUrl !== false) this.updateUrl();
   }
 
   forgetProject(projectId: string): void {
     this.workspaceSelection.forgetProject(machineProjectKey(selectedMachineId(this.getState()), projectId));
-    const workspacesByProjectId = Object.fromEntries(Object.entries(this.getState().workspacesByProjectId).filter(([candidate]) => candidate !== projectId));
-    this.setState({ workspacesByProjectId });
+    const state = this.getState();
+    // Drop the cached session lists for the forgotten project's workspaces too,
+    // so a later re-add never paints a stale snapshot from before the close.
+    const forgottenCwds = new Set((state.workspacesByProjectId[projectId] ?? []).map((workspace) => workspace.path));
+    const workspacesByProjectId = Object.fromEntries(Object.entries(state.workspacesByProjectId).filter(([candidate]) => candidate !== projectId));
+    const sessionsByWorkspacePath = forgottenCwds.size === 0
+      ? state.sessionsByWorkspacePath
+      : Object.fromEntries(Object.entries(state.sessionsByWorkspacePath).filter(([cwd]) => !forgottenCwds.has(cwd)));
+    this.setState({ workspacesByProjectId, sessionsByWorkspacePath });
   }
 
   async selectProject(project: Project, target?: RouteTarget) {
     const machineId = selectedMachineId(this.getState());
+
+    // Re-selecting the already-selected project from a plain click (no route
+    // target): keep the current selection and refresh the topology in the
+    // background, instead of blanking the workspace list and reloading it.
+    if (this.getState().selectedProject?.id === project.id && target?.workspaceId === undefined && target?.sessionId === undefined) {
+      void this.refreshSelectedProjectTopology();
+      return;
+    }
+
     this.sessions.clearActiveSession();
-    this.setState({ selectedProject: project, selectedWorkspace: undefined, workspaces: [], isLoadingWorkspaces: true, ...resetWorkspaceScopedState() });
+    const cachedWorkspaces = this.getState().workspacesByProjectId[project.id];
+    this.setState({
+      selectedProject: project,
+      selectedWorkspace: undefined,
+      workspaces: cachedWorkspaces ?? [],
+      isLoadingWorkspaces: cachedWorkspaces === undefined,
+      isLoadingSessions: false,
+      ...resetWorkspaceScopedState(),
+    });
+
+    // Stale-while-revalidate: when we already have this project's topology,
+    // paint it instantly and refresh in the background. First visit loads it.
+    if (cachedWorkspaces !== undefined) {
+      void this.refreshSelectedProjectTopology();
+      await this.selectPreferredWorkspaceFrom(project, cachedWorkspaces, machineId, target);
+      return;
+    }
+
     try {
       const workspaces = await this.api.workspaces(project.id, machineId);
       if (selectedMachineId(this.getState()) !== machineId || this.getState().selectedProject?.id !== project.id) return;
       this.setState({ workspaces, workspacesByProjectId: { ...this.getState().workspacesByProjectId, [project.id]: workspaces }, isLoadingWorkspaces: false });
-      const workspace = selectPreferredWorkspace(workspaces, { targetWorkspaceId: target?.workspaceId, latestWorkspaceId: this.workspaceSelection.latestWorkspaceId(machineProjectKey(machineId, project.id)) });
-      if (workspace) await this.selectWorkspace(workspace, { sessionId: target?.sessionId, updateUrl: target?.updateUrl });
-      else if (target?.updateUrl !== false) this.updateUrl();
+      await this.selectPreferredWorkspaceFrom(project, workspaces, machineId, target);
     } catch (error) {
       if (selectedMachineId(this.getState()) === machineId && this.getState().selectedProject?.id === project.id) this.setState({ error: String(error), isLoadingWorkspaces: false });
     }
@@ -59,21 +91,64 @@ export class WorkspaceController {
 
   async selectWorkspace(workspace: Workspace, target?: { sessionId?: string | undefined; updateUrl?: boolean | undefined }) {
     const machineId = selectedMachineId(this.getState());
+    const cwd = workspace.path;
+
+    // Re-selecting the already-selected workspace from a plain click (no route
+    // target): keep the current selection and refresh the session list in the
+    // background, instead of blanking it and reloading.
+    if (this.getState().selectedWorkspace?.id === workspace.id && target?.sessionId === undefined) {
+      void this.refreshSelectedWorkspaceSessions();
+      return;
+    }
+
     this.workspaceSelection.rememberWorkspace({ ...workspace, projectId: machineProjectKey(machineId, workspace.projectId) });
     this.sessions.clearActiveSession();
-    this.setState({ selectedWorkspace: workspace, isLoadingWorkspaces: false, ...resetWorkspaceScopedState() });
+    const cachedSessions = this.getState().sessionsByWorkspacePath[cwd];
+    this.setState({
+      selectedWorkspace: workspace,
+      isLoadingWorkspaces: false,
+      ...resetWorkspaceScopedState(),
+      ...(cachedSessions !== undefined ? { sessions: cachedSessions } : {}),
+      isLoadingSessions: cachedSessions === undefined,
+    });
+
+    // Stale-while-revalidate: show the cached session list instantly and refresh
+    // in the background; first visit loads it directly.
+    if (cachedSessions !== undefined) {
+      void this.refreshSelectedWorkspaceSessions();
+      await this.selectPreferredSessionFrom(workspace, cachedSessions, target);
+      return;
+    }
+
     try {
-      const sessions = mergeCachedNewSessions(workspace.path, await this.api.sessions(workspace.path, machineId), machineId);
+      const sessions = mergeCachedNewSessions(cwd, await this.api.sessions(cwd, machineId), machineId);
       if (selectedMachineId(this.getState()) !== machineId || this.getState().selectedWorkspace?.id !== workspace.id || this.getState().selectedProject?.id !== workspace.projectId) return;
-      this.setState({ sessions });
-      const session = this.sessions.preferredSession(workspace.path, sessions, target?.sessionId);
-      if (session) await this.sessions.selectSession(session, { updateUrl: target?.updateUrl });
-      else if (target?.updateUrl !== false) this.updateUrl();
+      this.setState({ sessions, sessionsByWorkspacePath: { ...this.getState().sessionsByWorkspacePath, [cwd]: sessions }, isLoadingSessions: false });
+      await this.selectPreferredSessionFrom(workspace, sessions, target);
     } catch (error) {
-      if (selectedMachineId(this.getState()) === machineId && this.getState().selectedWorkspace?.id === workspace.id) this.setState({ error: String(error) });
+      if (selectedMachineId(this.getState()) === machineId && this.getState().selectedWorkspace?.id === workspace.id) this.setState({ error: String(error), isLoadingSessions: false });
     }
   }
 
+  /** Picks the workspace to select after a project load and routes to {@link selectWorkspace}, or updates the URL when none qualifies. */
+  private async selectPreferredWorkspaceFrom(project: Project, workspaces: Workspace[], machineId: string, target: RouteTarget | undefined): Promise<void> {
+    const workspace = selectPreferredWorkspace(workspaces, { targetWorkspaceId: target?.workspaceId, latestWorkspaceId: this.workspaceSelection.latestWorkspaceId(machineProjectKey(machineId, project.id)) });
+    if (workspace !== undefined) {
+      await this.selectWorkspace(workspace, { sessionId: target?.sessionId, updateUrl: target?.updateUrl });
+      return;
+    }
+    if (target?.updateUrl !== false) this.updateUrl();
+  }
+
+  /** Picks the session to activate after a workspace load and routes to {@link SessionController.selectSession}, or updates the URL when none qualifies. */
+  private async selectPreferredSessionFrom(workspace: Workspace, sessions: SessionInfo[], target: { sessionId?: string | undefined; updateUrl?: boolean | undefined } | undefined): Promise<void> {
+    const session = this.sessions.preferredSession(workspace.path, sessions, target?.sessionId);
+    if (session !== undefined) {
+      await this.sessions.selectSession(session, { updateUrl: target?.updateUrl });
+      return;
+    }
+    if (target?.updateUrl !== false) this.updateUrl();
+  }
 
   async refreshProjectWorkspaces(projectId: string): Promise<Workspace[]> {
     const project = this.getState().projects.find((candidate) => candidate.id === projectId);
@@ -113,6 +188,31 @@ export class WorkspaceController {
         this.applyProjectWorkspaces(project.id, workspaces);
       } catch (error) {
         this.onBackgroundError(`Failed to refresh workspaces for project ${project.id} on ${machineId}`, error);
+      }
+    });
+  }
+
+  /**
+   * Re-lists the selected workspace's sessions so sessions created, archived, or
+   * removed elsewhere become visible, without disturbing the current selection or the
+   * surfaces keyed on it. The background counterpart of the eager cache fill in
+   * {@link selectWorkspace}; mirrors {@link refreshSelectedProjectTopology} for the
+   * session list.
+   */
+  async refreshSelectedWorkspaceSessions(): Promise<void> {
+    const state = this.getState();
+    const workspace = state.selectedWorkspace;
+    if (workspace === undefined) return;
+    const machineId = selectedMachineId(state);
+    const cwd = workspace.path;
+    await this.sessionRefreshes.request(cwd, async () => {
+      try {
+        const sessions = mergeCachedNewSessions(cwd, await this.api.sessions(cwd, machineId), machineId);
+        const current = this.getState();
+        if (selectedMachineId(current) !== machineId || current.selectedWorkspace?.id !== workspace.id) return;
+        this.setState({ sessions, sessionsByWorkspacePath: { ...current.sessionsByWorkspacePath, [cwd]: sessions } });
+      } catch (error) {
+        this.onBackgroundError(`Failed to refresh sessions for ${cwd} on ${machineId}`, error);
       }
     });
   }
@@ -169,4 +269,3 @@ function sameWorkspaceMetadata(left: Workspace, right: Workspace): boolean {
     && left.isGitRepo === right.isGitRepo
     && left.isGitWorktree === right.isGitWorktree;
 }
-

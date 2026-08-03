@@ -18,6 +18,10 @@ function startupActivity(patch: Partial<SessionActivity> = {}): SessionActivity 
   };
 }
 
+function closedDialogRecords(state: AppState) {
+  return state.messages.flatMap((message) => message.parts.filter((part) => part.type === "extensionDialogRecord"));
+}
+
 function dialog(dialogId: string, kind: ExtensionDialogKind = "confirm"): PendingExtensionDialog {
   return {
     dialogId,
@@ -192,7 +196,7 @@ describe("SessionController session_start dialog startup reachability", () => {
 
     expect(answerCalls).toEqual([{ sessionId: BACKEND_SESSION_ID, dialogId: "dialog-1", value: true, machineId: "local" }]);
     expect(harness.state.current.pendingDialogs).toEqual([]);
-    expect(harness.state.current.closedDialogs).toEqual([{ dialog: dialog("dialog-1"), reason: "answered", answer: true }]);
+    expect(closedDialogRecords(harness.state.current)).toEqual([{ type: "extensionDialogRecord", dialog: dialog("dialog-1"), reason: "answered", answer: true }]);
     expect(harness.state.current.error).toBe("");
 
     // The answer settled the hook daemon-side, so the create resolves and the
@@ -225,7 +229,7 @@ describe("SessionController session_start dialog startup reachability", () => {
 
     expect(cancelCalls).toEqual([{ sessionId: BACKEND_SESSION_ID, dialogId: "dialog-1" }]);
     expect(harness.state.current.pendingDialogs).toEqual([]);
-    expect(harness.state.current.closedDialogs).toEqual([{ dialog: dialog("dialog-1"), reason: "cancelled" }]);
+    expect(closedDialogRecords(harness.state.current)).toEqual([{ type: "extensionDialogRecord", dialog: dialog("dialog-1"), reason: "cancelled" }]);
     resolveBackendSession(harness);
     await start;
   });
@@ -242,7 +246,7 @@ describe("SessionController session_start dialog startup reachability", () => {
     await harness.controller.answerDialog("dialog-1", true);
 
     expect(harness.state.current.error).toBe("");
-    expect(harness.state.current.closedDialogs).toEqual([]);
+    expect(closedDialogRecords(harness.state.current)).toEqual([]);
     expect(harness.state.current.pendingDialogs.map((pending) => pending.dialogId)).toEqual(["dialog-2"]);
     resolveBackendSession(harness);
     await start;
