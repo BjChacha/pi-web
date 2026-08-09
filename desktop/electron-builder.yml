@@ -1,0 +1,39 @@
+appId: dev.pi-web.desktop
+productName: PI WEB
+
+# Everything the packaged app needs to run.
+directories:
+  output: desktop/release
+  buildResources: desktop/build
+
+# Ship the compiled server/sessiond/client, the Electron main/preload bundles,
+# and the production node_modules (fastify, node-pty, lit, ...). devDependencies
+# (electron, electron-vite, electron-builder itself) are excluded automatically.
+files:
+  - dist/**
+  - desktop/out/**
+  - package.json
+
+# asar is disabled for the first release: node-pty is a native addon loaded via
+# ELECTRON_RUN_AS_NODE, and keeping the filesystem real avoids the asar/native
+# interaction edge cases. Revisit once the native-module story is validated.
+asar: false
+
+# If asar is re-enabled later, these must stay unpacked so node-pty's .node can
+# be dlopened from disk.
+asarUnpack:
+  - "**/node-pty/**"
+  - "**/build/Release/*.node"
+
+npmRebuild: true
+
+win:
+  target:
+    - nsis
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  shortcutName: PI WEB

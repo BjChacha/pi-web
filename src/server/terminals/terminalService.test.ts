@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { RealtimeEvent, TerminalInfo } from "../../shared/apiTypes.js";
 import type { WorkspaceActivityService } from "../activity/workspaceActivityService.js";
 import { SessionEventHub } from "../realtime/sessionEventHub.js";
-import { interactiveShellArgs, TerminalService } from "./terminalService";
+import { interactiveShellArgs, resolveInteractiveShell, TerminalService } from "./terminalService";
 
 describe("interactive shell arguments", () => {
   it.each([
@@ -19,6 +19,31 @@ describe("interactive shell arguments", () => {
     { shell: "cmd.exe", expected: [] },
   ])("uses login mode only for a supported shell: $shell", ({ shell, expected }) => {
     expect(interactiveShellArgs(shell)).toEqual(expected);
+  });
+});
+
+describe("resolveInteractiveShell", () => {
+  it("honors PI_WEB_SHELL over platform defaults", () => {
+    expect(
+      resolveInteractiveShell({ PI_WEB_SHELL: "/usr/bin/zsh", SHELL: "/bin/bash", COMSPEC: "cmd.exe" }, "win32"),
+    ).toBe("/usr/bin/zsh");
+  });
+
+  it("uses COMSPEC on Windows", () => {
+    const comspec = String.raw`C:\Windows\System32\cmd.exe`;
+    expect(resolveInteractiveShell({ COMSPEC: comspec }, "win32")).toBe(comspec);
+  });
+
+  it("falls back to cmd.exe on Windows without COMSPEC", () => {
+    expect(resolveInteractiveShell({}, "win32")).toBe("cmd.exe");
+  });
+
+  it("uses SHELL on POSIX", () => {
+    expect(resolveInteractiveShell({ SHELL: "/bin/zsh" }, "linux")).toBe("/bin/zsh");
+  });
+
+  it("falls back to /bin/bash on POSIX without SHELL", () => {
+    expect(resolveInteractiveShell({}, "linux")).toBe("/bin/bash");
   });
 });
 

@@ -54,7 +54,7 @@ export class TerminalService {
   }
 
   create(options: { cwd: string; name?: string; cols?: number; rows?: number }): TerminalInfo {
-    const shell = process.env["SHELL"] ?? "/bin/bash";
+    const shell = resolveInteractiveShell();
     return this.createTerminal({ ...options, shellArgs: interactiveShellArgs(shell) });
   }
 
@@ -86,7 +86,7 @@ export class TerminalService {
         name: options.title,
         ...(options.cols === undefined ? {} : { cols: options.cols }),
         ...(options.rows === undefined ? {} : { rows: options.rows }),
-        shellArgs: ["-lc", commandRunShellScript(options.command)],
+        shellArgs: commandRunShellArgs(options.command),
         commandRunId,
       });
     } catch (error) {
@@ -158,7 +158,7 @@ export class TerminalService {
     const marker = "\r\n[continued in interactive shell]\r\n";
     record.buffer = trimReplayBuffer(record.buffer + marker);
     record.events.emit("output", marker);
-    const shell = process.env["SHELL"] ?? "/bin/bash";
+    const shell = resolveInteractiveShell();
     record.pty = pty.spawn(shell, interactiveShellArgs(shell), {
       name: "xterm-256color",
       cwd: record.cwd,
@@ -191,7 +191,7 @@ export class TerminalService {
     if (options.cwd === "") throw new Error("cwd is required");
     const id = options.id ?? randomUUID();
     const createdAt = new Date().toISOString();
-    const shell = process.env["SHELL"] ?? "/bin/bash";
+    const shell = resolveInteractiveShell();
     const terminal = pty.spawn(shell, options.shellArgs, {
       name: "xterm-256color",
       cwd: options.cwd,
@@ -284,6 +284,34 @@ export function interactiveShellArgs(shell: string): string[] {
 
 function commandRunShellScript(command: string): string {
   return `printf '%s\\n' ${shellQuote(`$ ${command}`)}\n${command}`;
+}
+
+function commandRunShellArgs(command: string): string[] {
+  const executable = shellExecutableName(resolveInteractiveShell());
+  if (executable === "cmd") return ["/c", windowsCmdScript(command)];
+  if (executable === "powershell" || executable === "pwsh") {
+    return ["-NoProfile", "-Command", windowsPowerShellScript(command)];
+  }
+  return ["-lc", commandRunShellScript(command)];
+}
+
+function windowsCmdScript(command: string): string {
+  return `@echo off & echo $ ${command} & ${command}`;
+}
+
+function windowsPowerShellScript(command: string): string {
+  return `Write-Host '$ ${command}'; ${command}`;
+}
+
+export function resolveInteractiveShell(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string {
+  const override = env["PI_WEB_SHELL"];
+  if (override !== undefined && override !== "") return override;
+  if (platform === "win32") return env["COMSPEC"] ?? "cmd.exe";
+  return env["SHELL"] ?? "/bin/bash";
+}
+
+function shellExecutableName(shell: string): string {
+  return shell.split(/[\\/]/).at(-1)?.toLowerCase().replace(/^-/, "").replace(/\.exe$/, "") ?? "";
 }
 
 function shellQuote(value: string): string {
