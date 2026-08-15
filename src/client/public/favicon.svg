@@ -2,9 +2,9 @@
   <title id="title">PI WEB mark</title>
   <desc id="desc">A horizontal brand bar.</desc>
   <style>
-    .bar { fill: #00f0d8; }
+    .bar { fill: #d97757; }
     @media (prefers-color-scheme: light) {
-      .bar { fill: #008c82; }
+      .bar { fill: #b8552f; }
     }
   </style>
   <rect class="bar" x="128" y="448" width="768" height="128"/>

@@ -62,7 +62,7 @@ function createWindow(rendererUrl: string): void {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
-    backgroundColor: "#0d1117",
+    backgroundColor: "#1f1e1d",
     title: "PI WEB",
     autoHideMenuBar: true,
     webPreferences: {

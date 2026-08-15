@@ -5,6 +5,9 @@ import { extname, join, resolve, sep } from "node:path";
 import type { Plugin } from "vite";
 import { defineConfig } from "vite";
 import { effectivePiWebConfig } from "./src/config";
+import { THEME_STORAGE_KEY } from "./src/client/src/theme";
+import { piWebDarkTokens, piWebLightTokens } from "./src/client/src/plugins/themes/palettes";
+import { resolveBootScheme } from "./src/client/src/plugins/themes/bootTheme";
 
 const { config } = effectivePiWebConfig();
 const apiPort = config.port ?? 8504;
@@ -90,8 +93,53 @@ function devDocsPlugin(): Plugin {
   };
 }
 
+// Renders the inline pre-paint script that applies theme tokens to
+// documentElement before first paint, so light-theme users never see a dark
+// flash. resolveBootScheme is inlined via toString() and must stay
+// self-contained (see its module comment).
+function bootThemeScript(): string {
+  const themes = { dark: piWebDarkTokens, light: piWebLightTokens };
+  return `(function () {
+  "use strict";
+  var themes = ${JSON.stringify(themes)};
+  var preference = null;
+  try { preference = JSON.parse(window.localStorage.getItem(${JSON.stringify(THEME_STORAGE_KEY)}) || "null"); } catch (error) { preference = null; }
+  var scheme = (${resolveBootScheme.toString()})(
+    preference && typeof preference.themeId === "string" ? preference.themeId : undefined,
+    preference ? preference.auto !== false : true,
+    window.matchMedia("(prefers-color-scheme: light)").matches
+  );
+  var tokens = themes[scheme] || themes.dark;
+  var root = document.documentElement;
+  root.style.colorScheme = scheme;
+  for (var name in tokens) root.style.setProperty(name, tokens[name]);
+  var meta = document.querySelector('meta[name="theme-color"]');
+  if (meta === null) {
+    meta = document.createElement("meta");
+    meta.setAttribute("name", "theme-color");
+    document.head.appendChild(meta);
+  }
+  meta.setAttribute("content", tokens["--pi-bg"]);
+})();`;
+}
+
+function bootThemePlugin(): Plugin {
+  return {
+    name: "pi-web-boot-theme",
+    transformIndexHtml() {
+      return [
+        {
+          tag: "script",
+          children: bootThemeScript(),
+          injectTo: "head-prepend",
+        },
+      ];
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [devDocsPlugin()],
+  plugins: [bootThemePlugin(), devDocsPlugin()],
   root: "src/client",
   base: "./",
   build: {

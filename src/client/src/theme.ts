@@ -91,6 +91,21 @@ export function applyPiWebTheme(theme: QualifiedThemeContribution): void {
     if (typeof value === "string" && value !== "") root.style.setProperty(token, value);
     else root.style.removeProperty(token);
   }
+  syncThemeColorMeta(theme.tokens["--pi-bg"]);
+}
+
+/** Keep the browser/PWA chrome color in step with the active page background. */
+function syncThemeColorMeta(background: string | undefined): void {
+  if (background === undefined || background === "") return;
+  const meta = document.querySelector('meta[name="theme-color"]') ?? createThemeColorMeta();
+  meta.setAttribute("content", background);
+}
+
+function createThemeColorMeta(): Element {
+  const meta = document.createElement("meta");
+  meta.setAttribute("name", "theme-color");
+  document.head.appendChild(meta);
+  return meta;
 }
 
 export function resolveThemePreference(options: ResolveThemePreferenceOptions): ThemePreferenceResolution {
