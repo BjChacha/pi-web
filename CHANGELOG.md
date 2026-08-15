@@ -1,5 +1,18 @@
 # @jmfederico/pi-web
 
+## 1.202608.0
+
+### Patch Changes
+
+- c09b67d: Show the thinking level in assistant chat bubble metadata next to the model and timestamp, for both history and live messages. Bubbles from turns with thinking off stay unchanged.
+- Redesign the agent chat transcript so conversation, tool calls, and reasoning have distinct visual weight. Messages now use an avatar + body layout (Pi / You) instead of same-weight colored cards, tool calls and results collapse into quiet left-railed "process blocks" with status dots, and thinking shows as a dashed low-contrast aside. Message metadata (model, time) is hover-only and the sticky per-message header band is gone, letting the assistant's text and results dominate the column.
+- Allow renaming a session from the session list and tree menus; the custom name replaces the generated label wherever the session is shown.
+- Add a browser-tab-style strip of recently visited sessions that survives a page reload. Each tab snapshots the full machine/project/workspace/session target, so clicking a tab restores navigation even when the session lives in another workspace.
+- c2b7cce: Sessions started via `spawn_session` and `spawn_subsession` now inherit the spawning session's thinking level instead of falling back to the pi default, clamped to the child model's capabilities.
+- 5f4d813: Let agents pick a model when delegating work: `spawn_session` and `spawn_subsession` accept an optional `model` parameter as an exact `provider/model-id` (an unknown value is rejected; omitting it keeps the inherited model). In the chat composer, typing `#` opens a model completion menu that inserts a `#provider/model-id` reference into the draft, which agents forward as that parameter.
+- 7103bfc: Streamline the session list bulk-selection toolbar: the Select visible / Clear visible / Clear buttons are now a single toggle that offers "Select visible" when nothing is selected and "Clear selected" otherwise, and the redundant Done button is gone — selection mode closes from the same ☑ heading button that opened it. and "Archive selected" / "Delete selected" are shortened to "Archive" / "Delete". The slimmer toolbar no longer wraps to two lines on narrow sidebars.
+- f94c9a2: Add a tokens-per-second rate to the session status bar (live while streaming, last message average when idle) and a plan-mode toggle button next to the model/thinking pickers when a plan extension command is installed.
+
 ## 1.202607.3
 
 ### Patch Changes

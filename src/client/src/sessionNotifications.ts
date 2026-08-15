@@ -19,6 +19,7 @@ export interface SessionNotificationTarget {
 
 export interface SessionNotificationAnnouncement {
   id: string;
+  notificationId: string;
   severity: SessionNotificationSeverity;
   message: string;
 }
@@ -129,6 +130,7 @@ export function applySelectedNotificationEvent(
         .slice(0, SESSION_NOTIFICATION_LIMIT);
       announcement = {
         id: `${event.daemonInstanceId}:${String(event.summary.inboxRevision)}:${delta.notification.id}`,
+        notificationId: delta.notification.id,
         severity: delta.notification.severity,
         message: delta.notification.message,
       };

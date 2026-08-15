@@ -26,6 +26,7 @@ export interface AppState {
   startingSessionCount: number;
   isLoadingProjects: boolean;
   isLoadingWorkspaces: boolean;
+  isLoadingSessions: boolean;
   selectedProject: Project | undefined;
   selectedWorkspace: Workspace | undefined;
   selectedSession: SessionInfo | undefined;
@@ -44,14 +45,6 @@ export interface AppState {
    * may wait at once.
    */
   pendingDialogs: PendingExtensionDialog[];
-  /**
-   * Dialogs that closed while their session was selected, kept with the close
-   * reason and any answer so the settled card can show what became of the
-   * dialog. The card stays until the user dismisses it. The wire outcome is
-   * deliberately small, so only a browser that saw the dialog open can show
-   * the closed card; deselection and reloads drop these.
-   */
-  closedDialogs: ClosedExtensionDialog[];
   /** Thinking levels available for the selected session's current model. */
   availableThinkingLevels: readonly string[];
   sessionStatuses: Record<string, SessionStatus>;
@@ -61,6 +54,8 @@ export interface AppState {
   /** Authoritative projection plus browser-local optimistic overlays for the selected inbox. */
   selectedNotificationInbox: SelectedSessionNotificationInbox | undefined;
   workspacesByProjectId: Record<string, Workspace[]>;
+  /** Sessions list cache keyed by workspace path, used to render instantly on re-entry and refresh in the background. */
+  sessionsByWorkspacePath: Record<string, SessionInfo[]>;
   workspaceDeletionRuns: Record<string, TerminalCommandRun>;
   commandDialog: Extract<CommandResult, { type: "select" }> | undefined;
   treeDialog: SessionTreeSnapshot | undefined;
@@ -168,6 +163,7 @@ export function initialAppState(): AppState {
     startingSessionCount: 0,
     isLoadingProjects: false,
     isLoadingWorkspaces: false,
+    isLoadingSessions: false,
     selectedProject: undefined,
     selectedWorkspace: undefined,
     selectedSession: undefined,
@@ -175,7 +171,6 @@ export function initialAppState(): AppState {
     activity: undefined,
     pendingAsk: undefined,
     pendingDialogs: [],
-    closedDialogs: [],
     availableThinkingLevels: [],
     sessionStatuses: {},
     sessionActivities: {},
@@ -183,6 +178,7 @@ export function initialAppState(): AppState {
     machineActivities: {},
     selectedNotificationInbox: undefined,
     workspacesByProjectId: {},
+    sessionsByWorkspacePath: {},
     workspaceDeletionRuns: {},
     commandDialog: undefined,
     treeDialog: undefined,

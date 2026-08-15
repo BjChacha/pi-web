@@ -2,6 +2,7 @@ import { api as defaultApi, type AskUserCloseResponse, type AskUserSubmission, t
 import type { AppState, ClosedExtensionDialog } from "../appState";
 import { forgetCachedNewSession, isCachedNewSessionInfo, markCachedNewSessionInfo, mergeCachedNewSessions, rememberCachedNewSession, stripCachedNewSessionMarker } from "../cachedNewSessions";
 import { textMessage } from "../chatMessages";
+import type { ChatLine } from "../components/shared";
 import { machineSessionKey } from "../machineKeys";
 import { clearDraft, moveDraft, saveDraft } from "../promptDraftStorage";
 import { clearAskDraft } from "../askDrafts";
@@ -59,6 +60,10 @@ export interface SessionControllerDependencies {
   notifications?: SessionNotificationSessionBridge;
   replacePromptEditorText?: (replacement: PromptEditorTextReplacement) => void | Promise<void>;
   onSelectedSessionReady?: (selection: SelectedSessionReady) => void;
+  /** Fires when a session's display info (e.g. its name) changes, so derived UI such as the tab strip can refresh. */
+  onSessionInfoChanged?: (session: SessionInfo) => void;
+  /** Fires with the ids of sessions removed from this machine (archived, deleted, or cleaned up), so derived UI such as the tab strip can drop their tabs. */
+  onSessionRemoved?: (sessionIds: string[], machineId: string) => void;
 }
 
 interface BulkSessionMutationResult {
@@ -111,6 +116,8 @@ export class SessionController {
   private readonly notifications: SessionNotificationSessionBridge | undefined;
   private readonly replacePromptEditorText: SessionControllerDependencies["replacePromptEditorText"];
   private readonly onSelectedSessionReady: SessionControllerDependencies["onSelectedSessionReady"];
+  private readonly onSessionInfoChanged: SessionControllerDependencies["onSessionInfoChanged"];
+  private readonly onSessionRemoved: SessionControllerDependencies["onSessionRemoved"];
   private selectionSeq = 0;
   private disposed = false;
   // Join-time stream watermark for the selected session. `seq` is the
@@ -128,6 +135,11 @@ export class SessionController {
   private readonly pendingSessionStarts = new Map<string, PendingSessionStart>();
   private readonly suppressedCreatedSessions = new Map<string, SuppressedCreatedSession>();
   private readonly selectedSessionRefreshes = new TrailingRefreshCoordinator<string>();
+  // Closed extension-dialog outcomes appended to the transcript as local
+  // records so they read as history: pushed below new messages, visible when
+  // scrolling back. Re-applied after transcript rebuilds (load more / refresh)
+  // and dropped when the session selection changes.
+  private localDialogRecords: ChatLine[] = [];
 
   constructor(
     private readonly getState: GetState,
@@ -142,6 +154,8 @@ export class SessionController {
     this.notifications = deps.notifications;
     this.replacePromptEditorText = deps.replacePromptEditorText;
     this.onSelectedSessionReady = deps.onSelectedSessionReady;
+    this.onSessionInfoChanged = deps.onSessionInfoChanged;
+    this.onSessionRemoved = deps.onSessionRemoved;
   }
 
   applyGlobalEvent(event: GlobalSessionEvent): void {
@@ -157,6 +171,7 @@ export class SessionController {
     this.selectionSeq += 1;
     this.socket.close();
     this.clearPendingUpdates();
+    this.localDialogRecords = [];
   }
 
   clearActiveSession() {
@@ -165,11 +180,12 @@ export class SessionController {
     this.notifications?.clearSelectedSession();
     this.streamWatermark = undefined;
     this.clearPendingUpdates();
+    this.localDialogRecords = [];
     // Note: sendingPrompts is intentionally NOT cleared here. Deselecting a
     // session must not cancel the in-flight upload indicator of the session
     // that is still sending; the per-session entry is cleared by send()'s
     // finally block when the request settles.
-    this.setState({ selectedSession: undefined, messages: [], messagePageStart: 0, messagePageEnd: 0, messagePageTotal: 0, isLoadingEarlierMessages: false, status: undefined, activity: undefined, pendingAsk: undefined, pendingDialogs: [], closedDialogs: [], availableThinkingLevels: [], treeDialog: undefined });
+    this.setState({ selectedSession: undefined, messages: [], messagePageStart: 0, messagePageEnd: 0, messagePageTotal: 0, isLoadingEarlierMessages: false, status: undefined, activity: undefined, pendingAsk: undefined, pendingDialogs: [], availableThinkingLevels: [], treeDialog: undefined });
   }
 
   deselectSession(options?: { forgetRememberedSelection?: boolean | undefined; updateUrl?: boolean | undefined }) {
@@ -216,6 +232,7 @@ export class SessionController {
     this.socket.close();
     this.streamWatermark = undefined;
     this.clearPendingUpdates();
+    this.localDialogRecords = [];
     const machineId = selectedMachineId(this.getState());
     this.notifications?.prepareSelectedSession(session, machineId);
     const transcriptKey = this.sessionCacheKey(session.id);
@@ -229,7 +246,6 @@ export class SessionController {
       activity: session.archived === true ? undefined : this.getState().sessionActivities[session.id],
       pendingAsk: session.archived === true ? undefined : this.selectedPendingAsk(this.getState().sessionStatuses[session.id], machineId),
       pendingDialogs: session.archived === true ? [] : (this.getState().sessionStatuses[session.id]?.pendingDialogs ?? []),
-      closedDialogs: [],
       availableThinkingLevels: [],
     });
     let buffered: SessionUiEvent[] | undefined;
@@ -238,7 +254,7 @@ export class SessionController {
         const page = await this.api.messages(session, { limit: MESSAGE_PAGE_SIZE }, selectedMachineId(this.getState()));
         if (seq !== this.selectionSeq || this.getState().selectedSession?.id !== session.id) return;
         const history = this.transcripts.mergeHistory(transcriptKey, page);
-        this.setState({ ...history, isLoadingEarlierMessages: false, status: undefined, activity: undefined, pendingAsk: undefined, pendingDialogs: [], closedDialogs: [] });
+        this.setState({ ...history, isLoadingEarlierMessages: false, status: undefined, activity: undefined, pendingAsk: undefined, pendingDialogs: [] });
         this.onSelectedSessionReady?.({ machineId, session });
         if (options?.updateUrl !== false) this.updateUrl();
         return;
@@ -291,7 +307,7 @@ export class SessionController {
       const page = await this.api.messages(session, { before: state.messagePageStart, limit: MESSAGE_PAGE_SIZE }, selectedMachineId(this.getState()));
       if (this.getState().selectedSession?.id !== session.id) return;
       const history = this.transcripts.mergeHistory(this.sessionCacheKey(session.id), page);
-      this.setState(history);
+      this.setState({ ...history, messages: this.withLocalDialogRecords(history.messages) });
     } catch (error) {
       this.setState({ error: String(error) });
     } finally {
@@ -554,6 +570,7 @@ export class SessionController {
       const sessions = markSessionArchived(state.sessions, session.id, new Date().toISOString());
       const selectionChange = selectionAfterArchivingSession(sessions, state.selectedSession?.id, session.id);
       this.setState({ sessions });
+      this.notifySessionRemoved([session.id]);
 
       if (selectionChange.type === "select") await this.selectSession(selectionChange.session);
       else if (selectionChange.type === "clear") this.deselectSession({ forgetRememberedSelection: true });
@@ -571,6 +588,7 @@ export class SessionController {
       const sessions = markSessionsArchived(state.sessions, archivedIds, new Date().toISOString());
       const selectionChange = selectionAfterArchivingSessions(sessions, state.selectedSession?.id, archivedIds);
       this.setState({ sessions });
+      this.notifySessionRemoved(archivedIds);
 
       if (selectionChange.type === "select") await this.selectSession(selectionChange.session);
       else if (selectionChange.type === "clear") this.deselectSession({ forgetRememberedSelection: true });
@@ -592,6 +610,7 @@ export class SessionController {
         const nextSessions = markSessionsArchived(state.sessions, archivedIds, generatedAt ?? new Date().toISOString());
         const selectionChange = selectionAfterArchivingSessions(nextSessions, state.selectedSession?.id, archivedIds);
         this.setState({ sessions: nextSessions });
+        this.notifySessionRemoved(archivedIds);
 
         if (selectionChange.type === "select") await this.selectSession(selectionChange.session);
         else if (selectionChange.type === "clear") this.deselectSession({ forgetRememberedSelection: true });
@@ -621,6 +640,7 @@ export class SessionController {
         const state = this.getState();
         const nextSessions = state.sessions.filter((session) => !deletedIdSet.has(session.id));
         this.setState({ sessions: nextSessions });
+        this.notifySessionRemoved(deletedIds);
         if (state.selectedSession !== undefined && deletedIdSet.has(state.selectedSession.id)) {
           const next = nextSessions.find((session) => session.archived !== true) ?? nextSessions[0];
           if (next !== undefined) await this.selectSession(next);
@@ -675,8 +695,9 @@ export class SessionController {
         sessions: nextSessions,
         sessionStatuses: omitKeys(state.sessionStatuses, affectedIds),
         sessionActivities: omitKeys(state.sessionActivities, affectedIds),
-        ...(selectedAffected ? { status: undefined, activity: undefined, pendingAsk: undefined, pendingDialogs: [], closedDialogs: [] } : {}),
+        ...(selectedAffected ? { status: undefined, activity: undefined, pendingAsk: undefined, pendingDialogs: [] } : {}),
       });
+      this.notifySessionRemoved(affectedIds, machineId);
 
       if (state.selectedSession !== undefined && deletedIdSet.has(state.selectedSession.id)) {
         const next = nextSessions.find((session) => session.archived !== true) ?? nextSessions[0];
@@ -738,6 +759,7 @@ export class SessionController {
       sendingPrompts: omitKey(state.sendingPrompts, session.id),
       clientQueuedSessionMessages: omitKey(state.clientQueuedSessionMessages, session.id),
     });
+    this.notifySessionRemoved([session.id]);
     if (this.getState().selectedSession?.id !== session.id) return;
     const next = sessions.find((candidate) => candidate.archived !== true) ?? sessions[0];
     if (next !== undefined) await this.selectSession(next);
@@ -775,6 +797,18 @@ export class SessionController {
       if (this.getState().selectedSession?.id === session.id) {
         await this.selectSession(session, { updateUrl: false });
       }
+    } catch (error) {
+      this.setState({ error: String(error) });
+    }
+  }
+
+  async renameSession(session: SessionInfo, name: string) {
+    if (session.archived === true) return;
+    if (isTransientNewSessionInfo(session, this.statusForSession(session), this.sessionPersistenceOptions())) return;
+    try {
+      // The `/name` command persists the name and publishes a `session.name`
+      // event; applySessionName reflects it into local state automatically.
+      await this.api.runCommand(session, `/name ${name}`, selectedMachineId(this.getState()));
     } catch (error) {
       this.setState({ error: String(error) });
     }
@@ -908,20 +942,20 @@ export class SessionController {
 
   /** Send the value the user gave for one of the session's open extension dialogs. */
   answerDialog(dialogId: string, value: ExtensionDialogAnswer): Promise<void> {
-    return this.closeOpenDialog(dialogId, (session, machineId) => this.api.answerDialog(session, dialogId, value, machineId));
+    return this.closeOpenDialog((session, machineId) => this.api.answerDialog(session, dialogId, value, machineId));
   }
 
   /** Close one of the session's open extension dialogs without answering it. */
   cancelDialog(dialogId: string): Promise<void> {
-    return this.closeOpenDialog(dialogId, (session, machineId) => this.api.cancelDialog(session, dialogId, machineId));
+    return this.closeOpenDialog((session, machineId) => this.api.cancelDialog(session, dialogId, machineId));
   }
 
-  private async closeOpenDialog(dialogId: string, close: (session: SessionInfo, machineId: string) => Promise<ExtensionDialogCloseResponse>): Promise<void> {
+  private async closeOpenDialog(close: (session: SessionInfo, machineId: string) => Promise<ExtensionDialogCloseResponse>): Promise<void> {
     const state = this.getState();
     const session = state.selectedSession;
     if (session === undefined || session.archived === true) return;
     if (isClientPendingStartSessionInfo(session)) {
-      await this.closePendingStartDialog(session, dialogId, close);
+      await this.closePendingStartDialog(session, close);
       return;
     }
     const machineId = selectedMachineId(state);
@@ -951,7 +985,7 @@ export class SessionController {
    * backend session the startup events named, so the close goes out under the
    * real id — the only route the daemon can serve before readiness.
    */
-  private async closePendingStartDialog(session: ClientPendingStartSessionInfo, dialogId: string, close: (session: SessionInfo, machineId: string) => Promise<ExtensionDialogCloseResponse>): Promise<void> {
+  private async closePendingStartDialog(session: ClientPendingStartSessionInfo, close: (session: SessionInfo, machineId: string) => Promise<ExtensionDialogCloseResponse>): Promise<void> {
     const pending = this.pendingSessionStarts.get(session.id);
     const backendSessionId = pending?.backendSessionId;
     // Without the real id there is no route to answer through — and no way a
@@ -1043,7 +1077,7 @@ export class SessionController {
       // partial is seeded into the in-memory transcript only, never the raw
       // history cache, so it never persists.
       const history = this.transcripts.mergeHistory(key, page);
-      const messages = this.transcripts.seedStreamingPartial(history.messages, streamSnapshot.partial);
+      const messages = this.transcripts.seedStreamingPartial(this.withLocalDialogRecords(history.messages), streamSnapshot.partial);
       this.streamWatermark = { sessionId: target.session.id, seq: streamSnapshot.seq };
       this.setState({
         ...history,
@@ -1140,6 +1174,7 @@ export class SessionController {
     this.notifications?.clearSelectedSession();
     this.streamWatermark = undefined;
     this.clearPendingUpdates();
+    this.localDialogRecords = [];
     const state = this.getState();
     const pendingStart = this.pendingSessionStarts.get(session.id);
     const activity = options?.activity ?? state.sessionActivities[session.id] ?? (pendingStart !== undefined ? creatingPendingSessionActivity(session.id, pendingStart.queuedSends.length) : undefined);
@@ -1155,7 +1190,6 @@ export class SessionController {
       activity,
       pendingAsk: undefined,
       pendingDialogs: [],
-      closedDialogs: [],
       availableThinkingLevels: [],
       treeDialog: undefined,
       ...(activity === undefined ? {} : { sessionActivities: { ...state.sessionActivities, [session.id]: activity } }),
@@ -1199,7 +1233,7 @@ export class SessionController {
       sessionActivities: omitSessionActivity(state.sessionActivities, tempId),
       sendingPrompts: moveRecordKey(state.sendingPrompts, tempId, cachedSession.id),
       clientQueuedSessionMessages: moveRecordKey(state.clientQueuedSessionMessages, tempId, cachedSession.id),
-      ...(wasSelected ? { selectedSession: cachedSession, status: state.sessionStatuses[cachedSession.id], activity: state.sessionActivities[cachedSession.id], pendingAsk: this.selectedPendingAsk(state.sessionStatuses[cachedSession.id], pending.machineId), pendingDialogs: state.sessionStatuses[cachedSession.id]?.pendingDialogs ?? [], closedDialogs: [] } : {}),
+      ...(wasSelected ? { selectedSession: cachedSession, status: state.sessionStatuses[cachedSession.id], activity: state.sessionActivities[cachedSession.id], pendingAsk: this.selectedPendingAsk(state.sessionStatuses[cachedSession.id], pending.machineId), pendingDialogs: state.sessionStatuses[cachedSession.id]?.pendingDialogs ?? [] } : {}),
       error: "",
     });
     this.applyReleasedCreatedSessions(releasedCreatedSessions, pending.machineId);
@@ -1393,19 +1427,42 @@ export class SessionController {
   }
 
   private recordClosedDialog(closed: ClosedExtensionDialog): void {
+    // A dialog records itself exactly once: both the answering browser's own
+    // response and the daemon's dialog.closed event route here. The outcome
+    // becomes a local transcript line so it is pushed up by new messages and
+    // stays visible when scrolling back, instead of pinning the transcript foot.
+    if (this.localDialogRecords.some((line) => this.extensionDialogRecordId(line) === closed.dialog.dialogId)) return;
+    const line: ChatLine = {
+      role: "tool",
+      parts: [{ type: "extensionDialogRecord", dialog: closed.dialog, reason: closed.reason, ...(closed.answer === undefined ? {} : { answer: closed.answer }) }],
+    };
+    this.localDialogRecords = [...this.localDialogRecords, line];
     const state = this.getState();
-    if (state.closedDialogs.some((entry) => entry.dialog.dialogId === closed.dialog.dialogId)) return;
     this.setState({
       pendingDialogs: state.pendingDialogs.filter((pending) => pending.dialogId !== closed.dialog.dialogId),
-      closedDialogs: [...state.closedDialogs, closed],
+      messages: [...state.messages, line],
     });
   }
 
-  /** Drop a closed dialog's transient outcome card (e.g. the user dismissed it). */
-  dismissClosedDialog(dialogId: string): void {
-    const state = this.getState();
-    if (!state.closedDialogs.some((entry) => entry.dialog.dialogId === dialogId)) return;
-    this.setState({ closedDialogs: state.closedDialogs.filter((entry) => entry.dialog.dialogId !== dialogId) });
+  private extensionDialogRecordId(line: ChatLine): string | undefined {
+    for (const part of line.parts) {
+      if (part.type === "extensionDialogRecord") return part.dialog.dialogId;
+    }
+    return undefined;
+  }
+
+  /** Re-apply local dialog records on top of a daemon-rebuilt transcript. */
+  private withLocalDialogRecords(messages: ChatLine[]): ChatLine[] {
+    return this.localDialogRecords.length === 0 ? messages : [...messages, ...this.localDialogRecords];
+  }
+
+  private extensionDialogRecordIds(): Set<string> {
+    const ids = new Set<string>();
+    for (const line of this.localDialogRecords) {
+      const id = this.extensionDialogRecordId(line);
+      if (id !== undefined) ids.add(id);
+    }
+    return ids;
   }
 
   private applyOpenedAsk(ask: PendingAskUser): void {
@@ -1452,6 +1509,13 @@ export class SessionController {
       sessions: this.getState().sessions.map(rename),
       selectedSession: selectedSession === undefined ? undefined : rename(selectedSession),
     });
+    const renamed = this.getState().sessions.find((candidate) => candidate.id === sessionId);
+    if (renamed !== undefined) this.onSessionInfoChanged?.(renamed);
+  }
+
+  private notifySessionRemoved(sessionIds: readonly string[], machineId = selectedMachineId(this.getState())): void {
+    if (sessionIds.length === 0) return;
+    this.onSessionRemoved?.([...sessionIds], machineId);
   }
 
   private applyEvent(event: SessionUiEvent) {
@@ -1602,7 +1666,7 @@ export class SessionController {
         const state = this.getState();
         const knownIds = new Set<string>([
           ...state.pendingDialogs.map((pendingDialog) => pendingDialog.dialogId),
-          ...state.closedDialogs.map((closed) => closed.dialog.dialogId),
+          ...this.extensionDialogRecordIds(),
         ]);
         const recovered = (status.pendingDialogs ?? []).filter((recoveredDialog) => !knownIds.has(recoveredDialog.dialogId));
         if (recovered.length > 0) this.setState({ pendingDialogs: [...state.pendingDialogs, ...recovered] });

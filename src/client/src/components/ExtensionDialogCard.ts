@@ -11,7 +11,6 @@ import type { ClosedExtensionDialog } from "../appState";
 
 export type ExtensionDialogAnswerCallback = (dialogId: string, value: ExtensionDialogAnswer) => void | Promise<void>;
 export type ExtensionDialogCancelCallback = (dialogId: string) => void | Promise<void>;
-export type ExtensionDialogDismissCallback = (dialogId: string) => void;
 
 const COUNTDOWN_TICK_MS = 1_000;
 
@@ -85,7 +84,6 @@ export class ExtensionDialogCard extends LitElement {
   @property({ attribute: false }) outcome?: ClosedExtensionDialog;
   @property({ attribute: false }) onAnswer?: ExtensionDialogAnswerCallback;
   @property({ attribute: false }) onCancel?: ExtensionDialogCancelCallback;
-  @property({ attribute: false }) onDismiss?: ExtensionDialogDismissCallback;
 
   @state() private inputValue = "";
   @state() private closing = false;
@@ -201,9 +199,6 @@ export class ExtensionDialogCard extends LitElement {
           <span class=${`header-status ${closed.reason}`}>${extensionDialogCloseLabel(closed.reason)}</span>
         </header>
         <p class="closed-summary">${extensionDialogCloseSummary(closed)}</p>
-        <footer class="dialog-footer">
-          <button class="secondary-action" type="button" @click=${() => { this.dismissClosed(closed); }}>Dismiss</button>
-        </footer>
       </article>
     `;
   }
@@ -241,10 +236,6 @@ export class ExtensionDialogCard extends LitElement {
     const input = event.currentTarget;
     if (!(input instanceof HTMLInputElement)) return;
     this.inputValue = input.value;
-  }
-
-  private dismissClosed(closed: ClosedExtensionDialog): void {
-    this.onDismiss?.(closed.dialog.dialogId);
   }
 
   private currentIdentity(): string | undefined {

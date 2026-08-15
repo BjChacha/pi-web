@@ -14,6 +14,7 @@ import { renderWorkspaceLabelInlineItems } from "./workspaceLabel";
 @customElement("workspace-list")
 export class WorkspaceList extends LitElement implements KeyboardNavigableSection {
   @property({ attribute: false }) workspaces: Workspace[] = [];
+  @property({ type: Boolean }) isLoading = false;
   @property({ attribute: false }) selected?: Workspace;
   @property({ type: Boolean, reflect: true }) collapsible = false;
   @property({ type: Boolean, reflect: true }) collapsed = false;
@@ -75,7 +76,7 @@ export class WorkspaceList extends LitElement implements KeyboardNavigableSectio
         <h2>${this.renderHeading()}</h2>
         ${this.collapsed ? null : html`
           <div class="list-body">
-            ${this.workspaces.map((workspace) => {
+            ${this.isLoading && this.workspaces.length === 0 ? this.renderSkeleton() : this.workspaces.map((workspace) => {
               const label = workspacePrimaryLabel(workspace);
               const items = this.workspaceLabelItems(workspace);
               return html`
@@ -96,6 +97,14 @@ export class WorkspaceList extends LitElement implements KeyboardNavigableSectio
           </div>
         `}
       </section>
+    `;
+  }
+
+  private renderSkeleton() {
+    return html`
+      <div class="skeleton-row" aria-hidden="true"></div>
+      <div class="skeleton-row" aria-hidden="true"></div>
+      <div class="skeleton-row" aria-hidden="true"></div>
     `;
   }
 

@@ -1,7 +1,7 @@
 import { LitElement, html } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import type { SessionStatus } from "../api";
-import { formatCost, formatTokenCount } from "../utils/format";
+import { formatCost, formatTokenCount, formatTokenRate } from "../utils/format";
 import { renderSessionWarningIcon, statusBarStyles } from "./shared";
 
 export interface StatusBarWarningControlContent {
@@ -57,6 +57,7 @@ export class StatusBar extends LitElement {
         `}
         <span>↑${formatTokenCount(tokens.input)}</span>
         <span>↓${formatTokenCount(tokens.output)}</span>
+        ${status.tokenRate === undefined ? null : html`<span class="rate" title="Tokens per second: live while streaming, last message average otherwise">${formatTokenRate(status.tokenRate)}</span>`}
         <span class="context">${contextText}</span>
         <span>${formatCost(status.cost)}</span>
         ${status.pendingMessageCount > 0 ? html`<span>${String(status.pendingMessageCount)} queued</span>` : null}

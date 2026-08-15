@@ -870,6 +870,21 @@ export interface SessionStatus {
   messageCount?: number;
   tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
   cost: number;
+  /**
+   * Tokens per second: live while an assistant message is streaming (real
+   * cumulative usage when the provider reports it, else a chars/4 estimate),
+   * the last completed assistant message's real average rate otherwise.
+   * Absent until the first measured message. Computed by the session daemon
+   * from the Pi event stream; Pi itself exposes no native rate figure.
+   */
+  tokenRate?: number;
+  /**
+   * Whether plan mode is active. Plan-mode extensions (official example,
+   * pi-plan-mode, ...) enter the mode by removing write tools (edit/write)
+   * via setActiveTools, so the daemon infers it from the active tool set.
+   * Absent when the daemon cannot determine it (e.g. empty tool set).
+   */
+  planModeActive?: boolean;
   contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null };
   /**
    * Live, runtime-scoped warnings for this session (skill/resource diagnostics,

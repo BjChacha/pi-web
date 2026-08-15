@@ -127,14 +127,15 @@ export class ToolExecutionView extends LitElement {
 
   static override styles = css`
     :host { display: block; width: 100%; max-width: 100%; min-width: 0; color: var(--pi-text); }
-    .tool-card { display: grid; gap: 8px; width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; overflow: hidden; border: 1px solid var(--pi-border); border-radius: 8px; background: var(--pi-bg); padding: 9px; color: var(--pi-text); }
-    .tool-card.running, .tool-card.pending { border-color: var(--pi-warning-border); background: var(--pi-warning-surface); }
-    .tool-card.success { border-color: var(--pi-success-border); background: var(--pi-success-bg); }
-    .tool-card.error { border-color: var(--pi-danger); background: color-mix(in srgb, var(--pi-danger) 10%, var(--pi-bg)); }
-    .tool-header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; min-width: 0; }
-    .tool-title { flex: 1 1 auto; display: inline-flex; align-items: baseline; gap: 7px; min-width: 0; }
-    .status-icon { flex: 0 0 auto; color: var(--pi-muted); }
-    strong { flex: 0 0 auto; color: var(--pi-text); }
+    .tool-card { display: grid; gap: 6px; width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; padding: 2px 0; color: var(--pi-text); }
+    .tool-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; }
+    .tool-title { flex: 1 1 auto; display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
+    .status-icon { flex: 0 0 auto; color: var(--pi-muted); font-size: 13px; line-height: 1; }
+    .tool-card.success .status-icon { color: var(--pi-success); }
+    .tool-card.error .status-icon { color: var(--pi-danger); }
+    .tool-card.running .status-icon { color: var(--pi-warning); animation: tool-pulse 1s ease-in-out infinite; }
+    strong { flex: 0 0 auto; color: var(--pi-text); font-size: 13px; font-weight: 600; }
+    @keyframes tool-pulse { 0%, 100% { opacity: .5; } 50% { opacity: 1; } }
     .path, .summary { display: block; flex: 1 1 auto; min-width: 0; max-width: 100%; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: thin; white-space: pre; color: var(--pi-accent); font: 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; direction: ltr; text-align: left; unicode-bidi: isolate; }
     .summary { color: var(--pi-muted); font-family: inherit; }
     .tool-meta { flex: 0 0 auto; display: inline-flex; align-items: baseline; gap: 8px; color: var(--pi-muted); font-size: 12px; }

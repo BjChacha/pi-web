@@ -20,6 +20,7 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
   @property({ attribute: false }) onSelect?: (project: Project) => void;
   @property({ attribute: false }) onClose?: (project: Project) => void;
   @property({ attribute: false }) onToggleCollapsed?: () => void;
+  @property({ attribute: false }) onAddProject?: () => void;
   @property({ attribute: false }) onFocusPreviousSection?: () => void | Promise<void>;
   @property({ attribute: false }) onFocusNextSection?: () => void | Promise<void>;
   @property({ attribute: false }) onCancelKeyboardNavigation?: () => void | Promise<void>;
@@ -53,7 +54,10 @@ export class ProjectList extends LitElement implements KeyboardNavigableSection 
   override render() {
     return html`
       <section>
-        <h2>${this.renderHeading()}</h2>
+        <h2>
+          ${this.renderHeading()}
+          ${this.onAddProject === undefined ? null : html`<button class="add-project" title="Add project" aria-label="Add project" @click=${() => { this.onAddProject?.(); }}>+</button>`}
+        </h2>
         ${this.collapsed ? null : html`
           <div class="list-body">
             ${this.projects.map((project) => html`

@@ -161,6 +161,7 @@ export function fakeRuntime(sessionId = "session-1", patch: Partial<TestSession>
       getUIContext: () => extensionUiContext,
       setUIContext: (uiContext) => { extensionUiContext = uiContext ?? testExtensionUiContext; },
     },
+    getActiveToolNames: () => ["edit", "write"],
     promptTemplates: [],
     resourceLoader: { getSkills: () => ({ skills: [] }) },
     subscribe: (listener: (event: unknown) => void) => {

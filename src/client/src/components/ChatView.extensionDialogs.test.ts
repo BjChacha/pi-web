@@ -3,6 +3,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PendingExtensionDialog } from "../api";
 import type { ClosedExtensionDialog } from "../appState";
+import type { ChatLine } from "./shared";
 import { ChatView } from "./ChatView";
 import { ExtensionDialogCard } from "./ExtensionDialogCard";
 
@@ -66,25 +67,19 @@ describe("ChatView open extension dialogs", () => {
 });
 
 describe("ChatView closed extension dialogs", () => {
-  it("renders closed dialogs transiently above the open one and forwards the dismiss callback", async () => {
+  it("renders a closed dialog's outcome inline in the transcript, not pinned at the foot", async () => {
     const view = await mountView();
-    const onDismissClosedDialog = vi.fn();
-    view.onDismissClosedDialog = onDismissClosedDialog;
     const closed = closedDialog("dlg-0", "Allow reads?", "answered", true);
-    view.closedDialogs = [closed];
+    // Closed outcomes are transcript content: appended as a local message so
+    // newer messages push them up and they remain visible when scrolling back.
+    view.messages = [dialogRecordMessage(closed)];
     view.pendingDialogs = [openDialog("dlg-1", "Allow file writes?")];
     await view.updateComplete;
 
-    const cards = [...(view.shadowRoot?.querySelectorAll<ExtensionDialogCard>(".chat > extension-dialog-card") ?? [])];
-    expect(cards).toHaveLength(2);
-    const closedCard = requiredElement(cards[0], "closed dialog card");
-    expect(closedCard.classList.contains("closed-dialog-card")).toBe(true);
-    expect(closedCard.getAttribute("data-scroll-anchor-id")).toBe("closed-dialog:dlg-0");
-    expect(closedCard.outcome).toBe(closed);
-    expect(cards[1]?.classList.contains("open-dialog-card")).toBe(true);
-
-    closedCard.onDismiss?.("dlg-0");
-    expect(onDismissClosedDialog).toHaveBeenCalledWith("dlg-0");
+    const closedCard = requiredElement(view.shadowRoot?.querySelector<ExtensionDialogCard>(".chat extension-dialog-card") ?? null, "closed dialog record card");
+    expect(closedCard.outcome).toEqual(closed);
+    // Settled outcomes never live in the notices rail or pin the transcript foot.
+    expect(view.shadowRoot?.querySelector(".top-notices extension-dialog-card")).toBeNull();
   });
 });
 
@@ -122,5 +117,12 @@ function closedDialog(
     dialog: openDialog(dialogId, title),
     reason,
     ...(answer === undefined ? {} : { answer }),
+  };
+}
+
+function dialogRecordMessage(closed: ClosedExtensionDialog): ChatLine {
+  return {
+    role: "tool",
+    parts: [{ type: "extensionDialogRecord", dialog: closed.dialog, reason: closed.reason, ...(closed.answer === undefined ? {} : { answer: closed.answer }) }],
   };
 }
