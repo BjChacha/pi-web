@@ -7,11 +7,13 @@ import { isArchivableSessionInfo, isTransientNewSessionInfo } from "../sessionPe
 import { parentSessionLocationLabel, parentSessionLocationTitle, type ParentSessionLocation } from "../parentSessionLocation";
 import { normalizeSessionPath } from "../sessionPaths";
 import { isSessionActive } from "../../../shared/activity";
+import { t } from "../i18n";
+import { LocaleController } from "../i18n/controller";
 import { actionMenuPanelStyle } from "./actionMenu";
 import { renderActionActivityIndicator, type ActivityIndicatorKind } from "./activityBadge";
 import type { KeyboardNavigableSection } from "./navigationFocus";
-import { activateSelectableRow, focusSelectedOrFirstSelectableRow, handleSelectableRowKeyboard } from "./selectableRow";
-import { listStyles } from "./shared";
+import { activateSelectableRow, focusLastSelectableRow, focusSelectedOrFirstSelectableRow, handleSelectableRowKeyboard } from "./selectableRow";
+import { flatListRowStyles, listStyles } from "./shared";
 
 function sessionLabel(session: SessionInfo): string {
   if (session.name !== undefined && session.name !== "") return session.name;
@@ -28,6 +30,7 @@ type SessionSelectionScope = "current" | "archived";
 
 @customElement("session-list")
 export class SessionList extends LitElement implements KeyboardNavigableSection {
+  private readonly locale = new LocaleController(this);
   @property({ attribute: false }) sessions: SessionInfo[] = [];
   @property({ type: Boolean }) isLoading = false;
   @property({ attribute: false }) statuses: Record<string, SessionStatus> = {};
@@ -45,6 +48,8 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
   @property({ type: String }) cleanupUnavailableMessage = "Update and restart Pi-Web on this machine to clean up sessions.";
   @property({ type: Boolean, reflect: true }) collapsible = false;
   @property({ type: Boolean, reflect: true }) collapsed = false;
+  /** Renders without the section chrome so a tree node can nest this list. */
+  @property({ type: Boolean, reflect: true }) embedded = false;
   @property({ attribute: false }) onSelect?: (session: SessionInfo) => void;
   @property({ attribute: false }) onStart?: () => void;
   @property({ attribute: false }) onToggleCollapsed?: () => void;
@@ -139,6 +144,11 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     return focusSelectedOrFirstSelectableRow(this.renderRoot, { fallbackSelector: ".section-toggle, h2 button:not([disabled])" });
   }
 
+  /** Focus the last session row; used by the tree for cross-boundary ArrowUp navigation. */
+  focusLastRow(): boolean {
+    return focusLastSelectableRow(this.renderRoot);
+  }
+
   override render() {
     const sessions = this.frozenSessions ?? this.sessions;
     const currentRows = sessionRowsForCurrentTree(sessions);
@@ -147,25 +157,33 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     const archivedRows = sessionRows(sessions.filter((session) => session.archived === true && !currentRowIds.has(session.id)));
     const descendantCounts = unarchivedDescendantCounts(sessions);
     const unreadCount = unreadSessionCount(currentSelectableSessions, this.unreadSessionIds);
-    return html`
-      <section>
-        ${this.renderHeading(currentRows.length + archivedRows.length, currentSelectableSessions, unreadCount)}
-        ${this.collapsed ? null : html`
-          <div class="list-body">
-            ${this.renderCurrentSelectionToolbar(currentSelectableSessions)}
-            ${this.startingCount > 0 ? this.renderStartingSession() : null}
-            ${this.isLoading && sessions.length === 0 ? this.renderSkeleton() : currentRows.map((row) => this.renderSession(row, descendantCounts.get(row.session.id) ?? 0, "current"))}
-            ${archivedRows.length > 0 ? html`
-              ${this.renderArchivedHeading(archivedRows.map((row) => row.session))}
-              ${this.archivedExpanded ? html`
-                ${this.renderArchivedSelectionToolbar(archivedRows.map((row) => row.session))}
-                ${archivedRows.map((row) => this.renderSession(row, descendantCounts.get(row.session.id) ?? 0, "archived"))}
-              ` : null}
-            ` : null}
-          </div>
-        `}
-      </section>
+    const sessionCount = currentRows.length + archivedRows.length;
+    const body = this.collapsed && !this.embedded ? null : html`
+      <div class="list-body">
+        ${this.renderCurrentSelectionToolbar(currentSelectableSessions)}
+        ${this.startingCount > 0 ? this.renderStartingSession() : null}
+        ${this.isLoading && sessions.length === 0 ? this.renderSkeleton() : currentRows.map((row) => this.renderSession(row, descendantCounts.get(row.session.id) ?? 0, "current"))}
+        ${archivedRows.length > 0 ? html`
+          ${this.renderArchivedHeading(archivedRows.map((row) => row.session))}
+          ${this.archivedExpanded ? html`
+            ${this.renderArchivedSelectionToolbar(archivedRows.map((row) => row.session))}
+            ${archivedRows.map((row) => this.renderSession(row, descendantCounts.get(row.session.id) ?? 0, "archived"))}
+          ` : null}
+        ` : null}
+      </div>
     `;
+    return this.embedded
+      ? html`
+        <div class="embedded-list">
+          ${body}
+        </div>
+      `
+      : html`
+        <section>
+          ${this.renderHeading(sessionCount, currentSelectableSessions, unreadCount)}
+          ${body}
+        </section>
+      `;
   }
 
   private renderSkeleton() {
@@ -181,7 +199,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     if (!this.collapsible) {
       return html`
         <h2>
-          <span class="plain-heading">Sessions</span>
+          <span class="plain-heading">${t("sessions.heading")}</span>
           ${this.renderCurrentSelectionButton(currentSessions)}
           ${this.renderUnreadCount(unreadCount)}
           ${this.renderCleanupButton()}
@@ -189,11 +207,11 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
         </h2>
       `;
     }
-    const selectedSummary = this.selected === undefined ? "No session selected" : sessionLabel(this.selected);
+    const selectedSummary = this.selected === undefined ? t("sessions.noneSelected") : sessionLabel(this.selected);
     const selectedTitle = this.selected?.path ?? selectedSummary;
     return html`
       <h2>
-        <button class="section-toggle" aria-expanded=${String(!this.collapsed)} @click=${() => { this.onToggleCollapsed?.(); }}><span class="section-title"><span class="section-name">${this.collapsed ? "▸" : "▾"} Sessions</span>${this.collapsed ? html`<small class="section-selected" dir="auto" title=${selectedTitle}>${selectedSummary}</small>` : null}</span></button>
+        <button class="section-toggle" aria-expanded=${String(!this.collapsed)} @click=${() => { this.onToggleCollapsed?.(); }}><span class="section-title"><span class="section-name">${this.collapsed ? "▸" : "▾"} ${t("sessions.heading")}</span>${this.collapsed ? html`<small class="section-selected" dir="auto" title=${selectedTitle}>${selectedSummary}</small>` : null}</span></button>
         ${this.renderCurrentSelectionButton(currentSessions)}
         ${this.renderUnreadCount(unreadCount)}
         <small class="section-count">${sessionCount}</small>
@@ -205,22 +223,22 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
 
   private renderUnreadCount(unreadCount: number) {
     if (unreadCount === 0) return null;
-    const label = `${String(unreadCount)} unread`;
+    const label = t("sessions.unread", { count: unreadCount });
     return html`<small class="section-unread-count" title=${label}>${label}</small>`;
   }
 
   private renderCurrentSelectionButton(currentSessions: SessionInfo[]) {
     if (this.collapsed || currentSessions.length === 0) return null;
     const active = this.selectionScopes.has("current");
-    return html`<button class="bulk-select-entry ${active ? "selected" : ""}" title=${active ? "Close current session selection" : "Select current sessions"} aria-label=${active ? "Close current session selection" : "Select current sessions"} aria-expanded=${String(active)} aria-pressed=${String(active)} @click=${(event: MouseEvent) => { event.stopPropagation(); this.toggleSelection("current", currentSessions); }}>☑</button>`;
+    return html`<button class="bulk-select-entry ${active ? "selected" : ""}" title=${active ? t("sessions.closeCurrentSelection") : t("sessions.selectCurrent")} aria-label=${active ? t("sessions.closeCurrentSelection") : t("sessions.selectCurrent")} aria-expanded=${String(active)} aria-pressed=${String(active)} @click=${(event: MouseEvent) => { event.stopPropagation(); this.toggleSelection("current", currentSessions); }}>☑</button>`;
   }
 
   private renderCleanupButton() {
-    return html`<button class="cleanup-entry" title=${this.canCleanup ? "Preview session cleanup" : this.cleanupUnavailableMessage} @click=${(event: MouseEvent) => { event.stopPropagation(); this.onCleanup?.(); }}>Clean up</button>`;
+    return html`<button class="cleanup-entry" title=${this.canCleanup ? t("sessions.cleanupTitle") : this.cleanupUnavailableMessage} @click=${(event: MouseEvent) => { event.stopPropagation(); this.onCleanup?.(); }}>${t("sessions.cleanup")}</button>`;
   }
 
   private renderStartButton() {
-    const title = this.startingCount > 0 ? "Start another session" : "Start a new session";
+    const title = this.startingCount > 0 ? t("sessions.startAnother") : t("sessions.start");
     return html`<button class="start-session-button" title=${title} aria-label=${title} ?disabled=${!this.canStart} @click=${(event: MouseEvent) => { event.stopPropagation(); this.onStart?.(); }}>+</button>`;
   }
 
@@ -229,8 +247,8 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     return html`
       <div class="pending-session-row starting-session" role="status" aria-live="polite">
         <div class="action-main">
-          <span class="action-name"><span class="activity-indicator sending" aria-hidden="true"></span>${plural ? `Starting ${String(this.startingCount)} sessions…` : "Starting session…"}</span>
-          <small>Waiting for ${plural ? "new sessions" : "the new session"} to be created</small>
+          <span class="action-name"><span class="activity-indicator sending" aria-hidden="true"></span>${plural ? t("sessions.startingMany", { count: this.startingCount }) : t("sessions.startingOne")}</span>
+          <small>${plural ? t("sessions.waitingMany") : t("sessions.waitingOne")}</small>
         </div>
       </div>
     `;
@@ -240,8 +258,8 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     const active = this.selectionScopes.has("archived");
     return html`
       <h2 class="subheading">
-        <button class="section-toggle" aria-expanded=${String(this.archivedExpanded)} @click=${() => { this.toggleArchived(); }}><span>${this.archivedExpanded ? "▾" : "▸"} Archived</span></button>
-        ${this.archivedExpanded ? html`<button class="bulk-select-entry ${active ? "selected" : ""}" title=${active ? "Close archived session selection" : "Select archived sessions"} aria-label=${active ? "Close archived session selection" : "Select archived sessions"} aria-expanded=${String(active)} aria-pressed=${String(active)} @click=${() => { this.toggleSelection("archived", archivedSessions); }}>☑</button>` : null}
+        <button class="section-toggle" aria-expanded=${String(this.archivedExpanded)} @click=${() => { this.toggleArchived(); }}><span>${this.archivedExpanded ? "▾" : "▸"} ${t("sessions.archived")}</span></button>
+        ${this.archivedExpanded ? html`<button class="bulk-select-entry ${active ? "selected" : ""}" title=${active ? t("sessions.closeArchivedSelection") : t("sessions.selectArchived")} aria-label=${active ? t("sessions.closeArchivedSelection") : t("sessions.selectArchived")} aria-expanded=${String(active)} aria-pressed=${String(active)} @click=${() => { this.toggleSelection("archived", archivedSessions); }}>☑</button>` : null}
         <small class="section-count">${archivedSessions.length}</small>
       </h2>
     `;
@@ -256,8 +274,8 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     return html`
       <div class="bulk-row selecting">
         ${this.renderSelectionControls("current", visibleSessions)}
-        <button ?disabled=${archivableSessions.length === 0} @click=${() => { this.archiveSelectedCurrent(); }}>Archive</button>
-        <button ?disabled=${unreadSelectedSessions.length === 0} @click=${() => { this.markSelectedCurrentRead(); }}>Mark read</button>
+        <button ?disabled=${archivableSessions.length === 0} @click=${() => { this.archiveSelectedCurrent(); }}>${t("sessions.archive")}</button>
+        <button ?disabled=${unreadSelectedSessions.length === 0} @click=${() => { this.markSelectedCurrentRead(); }}>${t("sessions.markRead")}</button>
       </div>
     `;
   }
@@ -269,7 +287,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     return html`
       <div class="bulk-row selecting">
         ${this.renderSelectionControls("archived", visibleSessions)}
-        <button class="danger" title=${this.canDeleteArchived ? "Permanently delete selected archived sessions" : this.archivedDeleteUnavailableMessage} ?disabled=${selectedSessions.length === 0 || !this.canDeleteArchived} @click=${() => { this.confirmDeleteSelectedArchived(); }}>Delete</button>
+        <button class="danger" title=${this.canDeleteArchived ? t("sessions.deleteSelectedArchivedTitle") : this.archivedDeleteUnavailableMessage} ?disabled=${selectedSessions.length === 0 || !this.canDeleteArchived} @click=${() => { this.confirmDeleteSelectedArchived(); }}>${t("sessions.delete")}</button>
         ${this.canDeleteArchived ? null : html`<small class="capability-hint">${this.archivedDeleteUnavailableMessage}</small>`}
       </div>
     `;
@@ -287,9 +305,9 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     const visibleSelectedCount = visibleSessions.filter((session) => this.selectedSessionIds.has(session.id)).length;
     return html`
       ${selectedCount === 0
-        ? html`<button @click=${() => { this.selectVisibleSessions(visibleSessions); }}>Select visible</button>`
-        : html`<button @click=${() => { this.clearSelection(scope); }}>Clear selected</button>`}
-      <small>${selectedCount} selected${visibleSelectedCount !== selectedCount ? html` · ${visibleSelectedCount} visible` : null}</small>
+        ? html`<button @click=${() => { this.selectVisibleSessions(visibleSessions); }}>${t("sessions.selectVisible")}</button>`
+        : html`<button @click=${() => { this.clearSelection(scope); }}>${t("sessions.clearSelected")}</button>`}
+      <small>${t("sessions.selectedCount", { count: selectedCount })}${visibleSelectedCount !== selectedCount ? html` · ${t("sessions.visibleCount", { count: visibleSelectedCount })}` : null}</small>
     `;
   }
 
@@ -319,33 +337,33 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
         @keydown=${(event: KeyboardEvent) => { this.handleSessionKeydown(event, session, scope); }}
       >
         <div class="action-main ${selectionActive ? "selecting" : ""}">
-          ${showsCheckbox ? html`<input class="session-checkbox" type="checkbox" aria-label=${`Select ${sessionLabel(session)}`} .checked=${bulkSelected} @click=${(event: MouseEvent) => { event.stopPropagation(); }} @change=${() => { this.toggleSelected(session.id); }}>` : null}
+          ${showsCheckbox ? html`<input class="session-checkbox" type="checkbox" aria-label=${t("sessions.selectSession", { name: sessionLabel(session) })} .checked=${bulkSelected} @click=${(event: MouseEvent) => { event.stopPropagation(); }} @change=${() => { this.toggleSelected(session.id); }}>` : null}
           <span class="action-name-line">${this.renamingSessionId === session.id
-            ? html`<input class="rename-input" aria-label="Rename session" .value=${this.renameValue} @click=${(event: MouseEvent) => { event.stopPropagation(); }} @input=${(event: InputEvent) => { if (event.target instanceof HTMLInputElement) this.renameValue = event.target.value; }} @keydown=${(event: KeyboardEvent) => { this.handleRenameKeydown(event, session); }} @blur=${() => { this.commitRename(session); }}>`
-            : html`<span class="action-name" dir="auto" @dblclick=${() => { if (canRename) this.startRename(session); }}>${this.renderRowMarker(row)}${sessionLabel(session)}</span>`}${this.renderRowBadges(row)}</span><small>${this.renderSessionMetaPrefix(session, status, activity)}${this.renderRelatedSessionsMeta(row)}${String(session.messageCount)} messages</small>
+            ? html`<input class="rename-input" aria-label=${t("sessions.renameTitle")} .value=${this.renameValue} @click=${(event: MouseEvent) => { event.stopPropagation(); }} @input=${(event: InputEvent) => { if (event.target instanceof HTMLInputElement) this.renameValue = event.target.value; }} @keydown=${(event: KeyboardEvent) => { this.handleRenameKeydown(event, session); }} @blur=${() => { this.commitRename(session); }}>`
+            : html`<span class="action-name" dir="auto" @dblclick=${() => { if (canRename) this.startRename(session); }}>${this.renderRowMarker(row)}${sessionLabel(session)}</span>`}${this.renderRowBadges(row)}</span><small>${this.renderSessionMetaPrefix(session, status, activity)}${this.renderRelatedSessionsMeta(row)}${t("sessions.messages", { count: session.messageCount })}</small>
           ${this.renderActivity(indicatorKind, unread)}
         </div>
         <div class="action-menu">
-          <button class="action-menu-toggle" title="Session actions" @click=${(event: MouseEvent) => { event.stopPropagation(); this.toggleMenu(session.id, event.currentTarget); }}>⋯</button>
+          <button class="action-menu-toggle" title=${t("sessions.sessionActions")} @click=${(event: MouseEvent) => { event.stopPropagation(); this.toggleMenu(session.id, event.currentTarget); }}>⋯</button>
           ${this.openMenuSessionId === session.id ? html`
             <div class="action-menu-panel" style=${this.menuStyle}>
               ${session.archived === true
                 ? html`
-                  <button title="Restore session" @click=${() => { this.openMenuSessionId = undefined; this.onRestore?.(session); }}>Restore</button>
-                  <button class="danger" title=${this.canDeleteArchived ? "Permanently delete archived session" : this.archivedDeleteUnavailableMessage} ?disabled=${!this.canDeleteArchived} @click=${() => { this.openMenuSessionId = undefined; this.confirmDeleteArchived(session); }}>Delete archived session</button>
+                  <button title=${t("sessions.restoreTitle")} @click=${() => { this.openMenuSessionId = undefined; this.onRestore?.(session); }}>${t("sessions.restore")}</button>
+                  <button class="danger" title=${this.canDeleteArchived ? t("sessions.deleteArchivedTitle") : this.archivedDeleteUnavailableMessage} ?disabled=${!this.canDeleteArchived} @click=${() => { this.openMenuSessionId = undefined; this.confirmDeleteArchived(session); }}>${t("sessions.deleteArchived")}</button>
                 `
                 : canDeleteTransient
-                  ? html`<button title="Delete transient new session" @click=${() => { this.openMenuSessionId = undefined; this.onDelete?.(session); }}>Delete</button>`
+                  ? html`<button title=${t("sessions.deleteTransientTitle")} @click=${() => { this.openMenuSessionId = undefined; this.onDelete?.(session); }}>${t("sessions.delete")}</button>`
                   : html`
-                    ${this.unreadSessionIds.has(session.id) ? html`<button title="Mark session as read" @click=${() => { this.openMenuSessionId = undefined; this.onMarkRead?.(session); }}>Mark as read</button>` : null}
-                    <button title="Rename session" @click=${() => { this.startRename(session); }}>Rename</button>
+                    ${this.unreadSessionIds.has(session.id) ? html`<button title=${t("sessions.markReadTitle")} @click=${() => { this.openMenuSessionId = undefined; this.onMarkRead?.(session); }}>${t("sessions.markAsRead")}</button>` : null}
+                    <button title=${t("sessions.renameTitle")} @click=${() => { this.startRename(session); }}>${t("sessions.rename")}</button>
                     ${canArchive ? html`
-                      <button title="Archive session" @click=${() => { this.openMenuSessionId = undefined; this.onArchive?.(session); }}>Archive</button>
-                      ${descendantCount > 0 ? html`<button title="Archive this session and its descendants" @click=${() => { this.openMenuSessionId = undefined; this.confirmArchiveWithDescendants(session, descendantCount); }}>Archive with descendants (${descendantCount})</button>` : null}
+                      <button title=${t("sessions.archiveTitle")} @click=${() => { this.openMenuSessionId = undefined; this.onArchive?.(session); }}>${t("sessions.archive")}</button>
+                      ${descendantCount > 0 ? html`<button title=${t("sessions.archiveWithDescendantsTitle")} @click=${() => { this.openMenuSessionId = undefined; this.confirmArchiveWithDescendants(session, descendantCount); }}>${t("sessions.archiveWithDescendants", { count: descendantCount })}</button>` : null}
                     ` : null}
                     ${this.renderGoToParentMenuItem(row)}
-                    ${session.parentSessionPath !== undefined ? html`<button title="Detach from parent" @click=${() => { this.openMenuSessionId = undefined; this.onDetachParent?.(session); }}>Detach from parent</button>` : null}
-                    ${canReloadSession ? html`<button title=${isSessionActive(this.statuses[session.id], this.activities[session.id]) ? "Stop current session activity before reloading from disk" : "Reload session from disk without refreshing Pi runtime resources"} ?disabled=${isSessionActive(this.statuses[session.id], this.activities[session.id])} @click=${() => { this.openMenuSessionId = undefined; this.onReload?.(session); }}>Reload from disk</button>` : null}
+                    ${session.parentSessionPath !== undefined ? html`<button title=${t("sessions.detachParent")} @click=${() => { this.openMenuSessionId = undefined; this.onDetachParent?.(session); }}>${t("sessions.detachParent")}</button>` : null}
+                    ${canReloadSession ? html`<button title=${isSessionActive(this.statuses[session.id], this.activities[session.id]) ? t("sessions.reloadBusyTitle") : t("sessions.reloadTitle")} ?disabled=${isSessionActive(this.statuses[session.id], this.activities[session.id])} @click=${() => { this.openMenuSessionId = undefined; this.onReload?.(session); }}>${t("sessions.reloadFromDisk")}</button>` : null}
                   `}
             </div>
           ` : null}
@@ -376,7 +394,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
    */
   private renderRowBadges(row: SessionRow) {
     if (row.depth <= 2) return null;
-    return html`<span class="row-badges"><span class="badge">depth ${row.depth}</span></span>`;
+    return html`<span class="row-badges"><span class="badge">${t("sessions.depth", { depth: row.depth })}</span></span>`;
   }
 
   /**
@@ -397,7 +415,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     if (!row.hasMissingParent || this.onGoToParent === undefined) return null;
     const location = this.parentLocation(row.session);
     if (location.kind !== "workspace") return null;
-    return html`<button title=${parentSessionLocationTitle(location)} @click=${() => { this.openMenuSessionId = undefined; this.onGoToParent?.(row.session, location); }}>Go to parent session</button>`;
+    return html`<button title=${parentSessionLocationTitle(location)} @click=${() => { this.openMenuSessionId = undefined; this.onGoToParent?.(row.session, location); }}>${t("sessions.goToParent")}</button>`;
   }
 
   private handleSessionKeydown(event: KeyboardEvent, session: SessionInfo, scope: SessionSelectionScope): void {
@@ -463,21 +481,25 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
   }
 
   private confirmArchiveWithDescendants(session: SessionInfo, descendantCount: number): void {
-    const noun = descendantCount === 1 ? "descendant session" : "descendant sessions";
-    if (confirm(`Archive “${sessionLabel(session)}” and ${String(descendantCount)} ${noun}?`)) this.onArchiveWithDescendants?.(session);
+    const message = descendantCount === 1
+      ? t("sessions.archiveDescendantsConfirmOne", { name: sessionLabel(session) })
+      : t("sessions.archiveDescendantsConfirmMany", { name: sessionLabel(session), count: descendantCount });
+    if (confirm(message)) this.onArchiveWithDescendants?.(session);
   }
 
   private confirmDeleteArchived(session: SessionInfo): void {
     if (!this.canDeleteArchived) return;
-    if (confirm(`Permanently delete archived session “${sessionLabel(session)}”? This cannot be undone.`)) void this.onDeleteArchived?.(session);
+    if (confirm(t("sessions.deleteArchivedConfirm", { name: sessionLabel(session) }))) void this.onDeleteArchived?.(session);
   }
 
   private confirmDeleteSelectedArchived(): void {
     if (!this.canDeleteArchived) return;
     const archived = this.selectedSessions("archived");
     if (archived.length === 0) return;
-    const noun = archived.length === 1 ? "archived session" : "archived sessions";
-    if (!confirm(`Permanently delete ${String(archived.length)} selected ${noun}? This cannot be undone.`)) return;
+    const confirmed = archived.length === 1
+      ? confirm(t("sessions.deleteSelectedArchivedConfirmOne"))
+      : confirm(t("sessions.deleteSelectedArchivedConfirmMany", { count: archived.length }));
+    if (!confirmed) return;
     this.selectedSessionIds = removeSessionIds(this.selectedSessionIds, archived.map((session) => session.id));
     void this.onDeleteArchivedMany?.(archived);
   }
@@ -565,11 +587,11 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
 
   private renderSessionMetaPrefix(session: SessionInfo, status: SessionStatus | undefined, activity: SessionActivity | undefined) {
     if (isTransientNewSessionInfo(session, status, this.sessionPersistenceOptions())) {
-      if (activity?.phase === "active") return "creating · ";
-      if (activity?.phase === "error") return "error · ";
-      return "new · ";
+      if (activity?.phase === "active") return t("sessions.creatingPrefix");
+      if (activity?.phase === "error") return t("sessions.errorPrefix");
+      return t("sessions.newPrefix");
     }
-    if (session.archived === true) return "read-only · ";
+    if (session.archived === true) return t("sessions.readonlyPrefix");
     return "";
   }
 
@@ -578,11 +600,11 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
   }
 
   private renderActivity(kind: ActivityIndicatorKind | undefined, unread: boolean) {
-    const label = kind === "sending" ? "Sending message" : "Session active";
-    return renderActionActivityIndicator(kind, label, unread ? "Unread session activity" : undefined);
+    const label = kind === "sending" ? t("sessions.sending") : t("sessions.active");
+    return renderActionActivityIndicator(kind, label, unread ? t("sessions.unreadActivity") : undefined);
   }
 
-  static override styles = [listStyles, css`
+  static override styles = [listStyles, flatListRowStyles, css`
     h2 { min-height: 30px; }
     h2 > .section-count { flex: 0 0 auto; display: inline; color: var(--pi-muted); font-size: inherit; }
     h2 > .section-unread-count { flex: 0 0 auto; display: inline; color: var(--pi-accent); font-size: inherit; text-transform: none; }
@@ -595,7 +617,7 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     .action-name, .section-selected { text-align: start; unicode-bidi: plaintext; }
     .action-row.unread .action-name { color: var(--pi-text-bright); font-weight: 650; }
     .plain-heading { min-width: 0; }
-    .action-name-line { min-width: 0; display: flex; align-items: flex-start; gap: 6px; }
+    .action-name-line { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 6px; }
     .action-name-line .action-name { flex: 1 1 auto; min-width: 0; }
     .rename-input { flex: 1 1 auto; min-width: 0; box-sizing: border-box; font: inherit; line-height: 1.25; color: inherit; background: var(--pi-surface); border: 1px solid var(--pi-accent); border-radius: 4px; padding: 1px 4px; outline: none; }
     /* Badges must not sit inside the line-clamped title, or a long name hides them entirely. */
@@ -612,8 +634,14 @@ export class SessionList extends LitElement implements KeyboardNavigableSection 
     .pending-session-row.starting-session .action-main { border-radius: 8px; border-style: dashed; color: var(--pi-muted); }
     .pending-session-row.starting-session .action-name { display: flex; align-items: center; gap: 6px; max-height: none; -webkit-line-clamp: 1; }
     .pending-session-row.starting-session .activity-indicator { flex: 0 0 auto; margin: 0; }
-    .action-main.selecting { padding-left: calc(32px + var(--depth, 0) * 16px); }
-    .session-checkbox { position: absolute; top: 9px; left: calc(8px + var(--depth, 0) * 16px); z-index: 2; margin: 0; }
+    .action-main.selecting { padding-left: calc(32px + var(--depth, 0) * 14px); }
+    .session-checkbox { position: absolute; top: 9px; left: calc(8px + var(--depth, 0) * 14px); z-index: 2; margin: 0; }
+    /* Flat rows remove .action-main borders; the starting placeholder keeps its dashed cue explicitly. */
+    .pending-session-row.starting-session .action-main { border: 1px dashed var(--pi-border-muted); }
+    /* Subtle tree guide for embedded lists inside the navigation tree. */
+    :host([embedded]) .list-body { margin-left: 5px; border-left: 1px solid var(--pi-border-muted); padding-left: 3px; }
+    .worktree-badge { flex: 0 0 auto; margin-left: 6px; max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
+    .embedded-list { display: flex; flex-direction: column; min-width: 0; }
   `];
 }
 
@@ -627,7 +655,7 @@ export function unreadSessionCount(
 /** Plain-text count of children living in other workspaces, or undefined when there are none. */
 function childrenElsewhereLabel(count: number | undefined): string | undefined {
   if (count === undefined || count === 0) return undefined;
-  return count === 1 ? "1 child elsewhere" : `${String(count)} children elsewhere`;
+  return count === 1 ? t("sessions.childElsewhereOne") : t("sessions.childElsewhereMany", { count });
 }
 
 function sessionSelectionScope(session: SessionInfo): SessionSelectionScope {

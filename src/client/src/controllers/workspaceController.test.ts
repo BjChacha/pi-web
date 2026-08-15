@@ -326,3 +326,111 @@ describe("WorkspaceController.refreshSelectedProjectTopology", () => {
     expect(loadWorkspaces).not.toHaveBeenCalled();
   });
 });
+
+describe("WorkspaceController.browseWorkspaceSessions", () => {
+  it("fills the browse cache for a non-selected workspace without touching the live selection", async () => {
+    const repo = project("p1", "/repo");
+    const main = workspace(repo.id, repo.path, { isMain: true });
+    const worktree = workspace(repo.id, "/repo-feature");
+    const mainSession = session(repo.path, "s1");
+    const worktreeSession = session("/repo-feature", "s2");
+    const loadSessions = vi.fn<(path: string, machineId?: string) => Promise<SessionInfo[]>>()
+      .mockResolvedValueOnce([worktreeSession])
+      .mockResolvedValueOnce([mainSession]);
+    let state: AppState = {
+      ...initialAppState(),
+      selectedMachine: machine("local"),
+      projects: [repo],
+      selectedProject: repo,
+      selectedWorkspace: main,
+      sessions: [mainSession],
+      workspacesByProjectId: { [repo.id]: [main, worktree] },
+    };
+    const setState = (patch: Partial<AppState>) => { state = { ...state, ...patch }; };
+    const controller = new WorkspaceController(
+      () => state,
+      setState,
+      vi.fn(),
+      { clearActiveSession: vi.fn(), preferredSession: vi.fn(), selectSession: vi.fn() },
+      undefined,
+      { api: { workspaces: vi.fn(), sessions: loadSessions }, onBackgroundError: vi.fn() },
+    );
+
+    await controller.browseWorkspaceSessions(worktree);
+
+    expect(loadSessions).toHaveBeenCalledWith("/repo-feature", "local");
+    expect(state.sessionsByWorkspacePath["/repo-feature"]).toEqual([worktreeSession]);
+    expect(state.sessions).toEqual([mainSession]);
+    expect(state.selectedWorkspace?.id).toBe(main.id);
+
+    // The selected workspace keeps its own refresh path; browsing it is a no-op.
+    await controller.browseWorkspaceSessions(main);
+    expect(loadSessions).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips the fetch when a browse snapshot is already cached", async () => {
+    const repo = project("p1", "/repo");
+    const worktree = workspace(repo.id, "/repo-feature");
+    const cached = session("/repo-feature", "s1");
+    const loadSessions = vi.fn<(path: string, machineId?: string) => Promise<SessionInfo[]>>().mockResolvedValue([]);
+    let state: AppState = {
+      ...initialAppState(),
+      selectedMachine: machine("local"),
+      workspacesByProjectId: { [repo.id]: [worktree] },
+      sessionsByWorkspacePath: { "/repo-feature": [cached] },
+    };
+    const controller = new WorkspaceController(
+      () => state,
+      (patch) => { state = { ...state, ...patch }; },
+      vi.fn(),
+      { clearActiveSession: vi.fn(), preferredSession: vi.fn(), selectSession: vi.fn() },
+      undefined,
+      { api: { workspaces: vi.fn(), sessions: loadSessions }, onBackgroundError: vi.fn() },
+    );
+
+    await controller.browseWorkspaceSessions(worktree);
+
+    expect(loadSessions).not.toHaveBeenCalled();
+  });
+});
+
+describe("WorkspaceController.prefetchNavigationSnapshots", () => {
+  it("warms every project's topology and workspace snapshot, skipping cached and selected entries", async () => {
+    const repoA = project("p1", "/repo-a");
+    const repoB = project("p2", "/repo-b");
+    const aMain = workspace(repoA.id, "/repo-a", { isMain: true });
+    const aWorktree = workspace(repoA.id, "/repo-a-feature");
+    const bMain = workspace(repoB.id, "/repo-b", { isMain: true });
+    const loadWorkspaces = vi.fn()
+      .mockResolvedValueOnce([aMain, aWorktree])
+      .mockResolvedValueOnce([bMain]);
+    const loadSessions = vi.fn<(path: string, machineId?: string) => Promise<SessionInfo[]>>()
+      .mockImplementation((path: string) => Promise.resolve([session(path, `s-${path}`)]));
+    let state: AppState = {
+      ...initialAppState(),
+      selectedMachine: machine("local"),
+      projects: [repoA, repoB],
+      selectedProject: repoB,
+      selectedWorkspace: bMain,
+      workspacesByProjectId: { [repoB.id]: [bMain] },
+      sessionsByWorkspacePath: { "/repo-a-feature": [session("/repo-a-feature")] },
+    };
+    const setState = (patch: Partial<AppState>) => { state = { ...state, ...patch }; };
+    const controller = new WorkspaceController(
+      () => state,
+      setState,
+      vi.fn(),
+      { clearActiveSession: vi.fn(), preferredSession: vi.fn(), selectSession: vi.fn() },
+      undefined,
+      { api: { workspaces: loadWorkspaces, sessions: loadSessions }, onBackgroundError: vi.fn() },
+    );
+
+    await controller.prefetchNavigationSnapshots();
+
+    expect(loadWorkspaces).toHaveBeenCalledTimes(1);
+    expect(loadWorkspaces).toHaveBeenCalledWith(repoA.id, "local");
+    expect(loadSessions).toHaveBeenCalledTimes(1);
+    expect(loadSessions).toHaveBeenCalledWith("/repo-a", "local");
+    expect(Object.keys(state.sessionsByWorkspacePath).sort()).toEqual(["/repo-a", "/repo-a-feature"].sort());
+  });
+});

@@ -217,6 +217,65 @@ export class WorkspaceController {
     });
   }
 
+  /**
+   * Lazily fills the workspace map so the navigation tree can browse a
+   * project's workspaces without selecting the project. Safe for the
+   * selection: a non-selected project only updates the cached map.
+   */
+  async browseProjectWorkspaces(project: Project): Promise<void> {
+    if (this.getState().workspacesByProjectId[project.id] !== undefined) return;
+    const machineId = selectedMachineId(this.getState());
+    await this.topologyRefreshes.request(machineProjectKey(machineId, project.id), async () => {
+      try {
+        const workspaces = await this.api.workspaces(project.id, machineId);
+        if (selectedMachineId(this.getState()) !== machineId) return;
+        this.applyProjectWorkspaces(project.id, workspaces);
+      } catch (error) {
+        this.onBackgroundError(`Failed to browse workspaces for project ${project.id} on ${machineId}`, error);
+      }
+    });
+  }
+
+  /**
+   * Lazily fills the session cache so the navigation tree can browse a
+   * workspace's sessions without selecting it. Never touches the selected
+   * workspace's live list; the selected workspace keeps `state.sessions` as
+   * its single source of truth.
+   */
+  async browseWorkspaceSessions(workspace: Workspace): Promise<void> {
+    if (this.getState().sessionsByWorkspacePath[workspace.path] !== undefined) return;
+    if (this.getState().selectedWorkspace?.id === workspace.id) return;
+    const machineId = selectedMachineId(this.getState());
+    await this.sessionRefreshes.request(workspace.path, async () => {
+      try {
+        const sessions = mergeCachedNewSessions(workspace.path, await this.api.sessions(workspace.path, machineId), machineId);
+        const current = this.getState();
+        if (selectedMachineId(current) !== machineId) return;
+        if (current.selectedWorkspace?.id === workspace.id) return;
+        this.setState({ sessionsByWorkspacePath: { ...current.sessionsByWorkspacePath, [workspace.path]: sessions } });
+      } catch (error) {
+        this.onBackgroundError(`Failed to browse sessions for ${workspace.path} on ${machineId}`, error);
+      }
+    });
+  }
+
+  /**
+   * Warm the navigation tree's browse caches in the background: fetch each
+   * project's workspace topology and each non-selected workspace's session
+   * snapshot, so first expansion renders instantly instead of showing a
+   * loading skeleton. Sequential on purpose — remote machines can be slow,
+   * and a serialized queue keeps this polite.
+   */
+  async prefetchNavigationSnapshots(): Promise<void> {
+    for (const project of this.getState().projects) {
+      await this.browseProjectWorkspaces(project);
+      const workspaces = this.getState().workspacesByProjectId[project.id] ?? [];
+      for (const workspace of workspaces) {
+        await this.browseWorkspaceSessions(workspace);
+      }
+    }
+  }
+
   async refreshAfterWorkspaceDeleted(projectId: string, workspaceId: string): Promise<void> {
     const workspaces = await this.refreshProjectWorkspaces(projectId);
     const state = this.getState();

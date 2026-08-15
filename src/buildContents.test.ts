@@ -10,7 +10,7 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 describe("production build contents", () => {
   // Constructing the full compiler graph can exceed Vitest's default timeout under parallel-suite CPU contention.
-  it("keeps test-support modules out of the TypeScript build graph", { timeout: 15_000 }, () => {
+  it("keeps test-support modules out of the TypeScript build graph", { timeout: 60_000 }, () => {
     const buildConfig = readBuildConfig();
     const program = ts.createProgram({ rootNames: buildConfig.fileNames, options: buildConfig.options });
     const projectSources = program.getSourceFiles()

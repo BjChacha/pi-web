@@ -135,6 +135,28 @@ export interface CompletionItem {
 	cursorOffset?: number;
 }
 
+/**
+ * Flat sidebar rows for components that render `.action-row` lists after
+ * `listStyles`: single-line flex rows with no per-row border or card surface,
+ * hover tint, selected tint, and the row menu revealed only on
+ * hover/focus/selection as an overlay instead of occupying a bordered column.
+ * Append AFTER listStyles so these rules win by cascade order.
+ */
+export const flatListRowStyles = css`
+  .action-row { position: relative; display: block; margin: 1px 0; border-radius: 6px; }
+  .action-main { display: flex; align-items: center; gap: 7px; min-height: 26px; border: 0; border-radius: 6px; background: transparent; padding: 3px 26px 3px calc(6px + var(--depth, 0) * 14px); }
+  .action-name { flex: 1 1 auto; min-width: 0; display: block; max-height: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; -webkit-line-clamp: unset; }
+  .action-main > small { flex: 0 1 auto; display: inline; min-width: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-left: auto; }
+  .action-activity { position: static; flex: 0 0 auto; top: auto; right: auto; }
+  .rename-input { width: 100%; }
+  .action-row:not(.selected):hover .action-main { background: var(--pi-surface-hover); }
+  .action-row.selected .action-main { background: var(--pi-selection-bg); color: var(--pi-text-bright); }
+  .action-menu { position: absolute; top: 4px; right: 4px; align-self: auto; }
+  .action-menu-toggle { width: 22px; height: 22px; min-width: 22px; border: 0; border-radius: 5px; background: transparent; color: var(--pi-muted); opacity: 0; }
+  .action-menu-toggle:hover, .action-menu-toggle:focus-visible { color: var(--pi-text); background: var(--pi-surface-hover); opacity: 1; }
+  .action-row:hover .action-menu-toggle, .action-row:focus-within .action-menu-toggle, .action-row.selected .action-menu-toggle { opacity: 1; }
+`;
+
 export const appStyles = css`
   /* Mobile browsers already subtract browser controls from 100dvh; reserve bottom safe area only in standalone PWA modes. */
   :host { --pi-app-safe-area-bottom: 0px; position: fixed; top: 0; right: 0; left: 0; display: block; height: 100dvh; box-sizing: border-box; overflow: hidden; padding: env(safe-area-inset-top) env(safe-area-inset-right) var(--pi-app-safe-area-bottom) env(safe-area-inset-left); color: var(--pi-text); background: var(--pi-bg); font: 14px system-ui, sans-serif; }

@@ -1,33 +1,27 @@
 import type { ReactiveController, ReactiveControllerHost } from "lit";
 
-export const NAVIGATION_SECTION_ORDER = ["machines", "projects", "workspaces", "sessions"] as const;
+/** Navigation sections of the side panel: machine selector and the unified project-session tree. */
+export const NAVIGATION_SECTION_ORDER = ["machines", "tree"] as const;
 export type NavigationSection = (typeof NAVIGATION_SECTION_ORDER)[number];
 export type ExpandedNavigationSection = NavigationSection | "none" | undefined;
 
-export interface NavigationSelectionState {
-  selectedProject: object | undefined;
-  selectedWorkspace: object | undefined;
+export function defaultNavigationSection(): NavigationSection {
+  return "tree";
 }
 
-export function defaultNavigationSection(state: NavigationSelectionState): NavigationSection {
-  if (state.selectedProject === undefined) return "projects";
-  if (state.selectedWorkspace === undefined) return "workspaces";
-  return "sessions";
-}
-
-export function expandedNavigationSection(expanded: ExpandedNavigationSection, state: NavigationSelectionState): NavigationSection | undefined {
+export function expandedNavigationSection(expanded: ExpandedNavigationSection): NavigationSection | undefined {
   if (expanded === "none") return undefined;
-  return expanded ?? defaultNavigationSection(state);
+  return expanded ?? defaultNavigationSection();
 }
 
-export function isNavigationSectionCollapsed(section: NavigationSection, options: { isMobileLayout: boolean; expanded: ExpandedNavigationSection; state: NavigationSelectionState; collapsedSections?: readonly NavigationSection[] | undefined }): boolean {
-  if (options.isMobileLayout) return expandedNavigationSection(options.expanded, options.state) !== section;
+export function isNavigationSectionCollapsed(section: NavigationSection, options: { isMobileLayout: boolean; expanded: ExpandedNavigationSection; collapsedSections?: readonly NavigationSection[] | undefined }): boolean {
+  if (options.isMobileLayout) return expandedNavigationSection(options.expanded) !== section;
   return options.collapsedSections?.includes(section) ?? false;
 }
 
-export function toggleNavigationSection(expanded: ExpandedNavigationSection, section: NavigationSection, options: { isMobileLayout: boolean; state: NavigationSelectionState }): ExpandedNavigationSection {
+export function toggleNavigationSection(expanded: ExpandedNavigationSection, section: NavigationSection, options: { isMobileLayout: boolean }): ExpandedNavigationSection {
   if (!options.isMobileLayout) return expanded;
-  return expandedNavigationSection(expanded, options.state) === section ? "none" : section;
+  return expandedNavigationSection(expanded) === section ? "none" : section;
 }
 
 export function expandNavigationSection(expanded: ExpandedNavigationSection, section: NavigationSection, isMobileLayout: boolean): ExpandedNavigationSection {
@@ -55,28 +49,26 @@ export class NavigationSectionsController implements ReactiveController {
 
   constructor(
     private readonly host: ReactiveControllerHost,
-    private readonly getState: () => NavigationSelectionState,
     private readonly isMobileLayout: () => boolean,
   ) {
     host.addController(this);
   }
 
   expandedSection(): NavigationSection | undefined {
-    return expandedNavigationSection(this.expanded, this.getState());
+    return expandedNavigationSection(this.expanded);
   }
 
   isCollapsed(section: NavigationSection): boolean {
     return isNavigationSectionCollapsed(section, {
       isMobileLayout: this.isMobileLayout(),
       expanded: this.expanded,
-      state: this.getState(),
       collapsedSections: this.collapsedSections,
     });
   }
 
   toggle(section: NavigationSection): void {
     if (this.isMobileLayout()) {
-      this.setExpanded(toggleNavigationSection(this.expanded, section, { isMobileLayout: true, state: this.getState() }));
+      this.setExpanded(toggleNavigationSection(this.expanded, section, { isMobileLayout: true }));
       return;
     }
     this.setCollapsedSections(toggleCollapsedNavigationSection(this.collapsedSections, section));
@@ -121,5 +113,5 @@ function orderedNavigationSections(sections: Iterable<NavigationSection>): Navig
 }
 
 function navigationSectionListsEqual(first: readonly NavigationSection[], second: readonly NavigationSection[]): boolean {
-  return first.length === second.length && first.every((section, index) => section === second[index]);
+  return first.length === second.length && first.every((section, index) => second[index] === section);
 }

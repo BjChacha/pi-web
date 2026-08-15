@@ -106,59 +106,6 @@ describe("session action eligibility", () => {
   });
 });
 
-describe("mark-as-read actions", () => {
-  it("offers Mark as read in the menu of an unread current session and forwards it", () => {
-    const unread = session("unread");
-    const list = sessionList([unread, session("read")], new Set([unread.id]));
-    const onMarkRead = vi.fn<(session: SessionInfo) => void>();
-    list.onMarkRead = onMarkRead;
-
-    openSessionMenu(list, unread.id);
-    templateClickHandlerForText(renderList(list), "Mark as read")(new Event("click"));
-
-    expect(onMarkRead).toHaveBeenCalledWith(unread);
-    expect(componentState(list, "openMenuSessionId")).toBeUndefined();
-  });
-
-  it("hides Mark as read for read, transient, and archived sessions even when tracked as unread", () => {
-    const read = session("read");
-    const cached = markCachedNewSessionInfo(session("cached"));
-    const archived = { ...session("archived"), archived: true, archivedAt: "2026-06-09T00:00:00.000Z" };
-    const list = sessionList([read, cached, archived], new Set([cached.id, archived.id]));
-
-    openSessionMenu(list, read.id);
-    expect(findOptionalTemplateClickHandlerForText(renderList(list), "Mark as read")).toBeUndefined();
-
-    openSessionMenu(list, cached.id);
-    expect(findOptionalTemplateClickHandlerForText(renderList(list), "Mark as read")).toBeUndefined();
-
-    setComponentState(list, "archivedExpanded", true);
-    openSessionMenu(list, archived.id);
-    expect(findOptionalTemplateClickHandlerForText(renderList(list), "Mark as read")).toBeUndefined();
-  });
-
-  it("enables bulk Mark read only when a selected session is unread and forwards only the unread selection", () => {
-    const unreadA = session("unread-a");
-    const readB = session("read-b");
-    const unreadC = session("unread-c");
-    const list = sessionList([unreadA, readB, unreadC], new Set([unreadA.id, unreadC.id]));
-    const onMarkReadMany = vi.fn<(sessions: SessionInfo[]) => void>();
-    list.onMarkReadMany = onMarkReadMany;
-    setComponentState(list, "selectionScopes", new Set(["current"]));
-
-    setComponentState(list, "selectedSessionIds", new Set([readB.id]));
-    const disabledButton = markReadButton(renderList(list));
-    expect(disabledButton.disabled).toBe(true);
-    disabledButton.click(new Event("click"));
-    expect(onMarkReadMany).not.toHaveBeenCalled();
-
-    setComponentState(list, "selectedSessionIds", new Set([unreadA.id, readB.id, unreadC.id]));
-    const enabledButton = markReadButton(renderList(list));
-    expect(enabledButton.disabled).toBe(false);
-    enabledButton.click(new Event("click"));
-    expect(onMarkReadMany).toHaveBeenCalledWith([unreadA, unreadC]);
-  });
-});
 
 describe("rename action", () => {
   function renameInput(list: SessionList): TemplateResult {
@@ -376,22 +323,6 @@ function setComponentState(list: SessionList, property: string, value: unknown):
   if (!Reflect.set(list, property, value)) throw new Error(`Could not set session list property ${property}`);
 }
 
-// Locates the bulk "Mark read" button inside the selection toolbar template,
-// anchored to the button's own static text so unrelated toolbar changes do not
-// break the lookup. The disabled binding sits immediately before its @click.
-function markReadButton(template: TemplateResult): { disabled: boolean; click: TemplateEventHandler } {
-  const host = findTemplateWithStaticText(template, ">Mark read</button>");
-  const strings = templateStrings(host);
-  const values = templateValues(host);
-  for (let index = 0; index < values.length; index += 1) {
-    if (strings[index + 1]?.includes(">Mark read</button>") !== true) continue;
-    const click = values[index];
-    const disabled = values[index - 1];
-    if (!isTemplateEventHandler(click) || typeof disabled !== "boolean") throw new Error("Mark read button wiring is unavailable");
-    return { disabled, click };
-  }
-  throw new Error("Expected a click handler before >Mark read</button>");
-}
 
 function findTemplateWithStaticText(value: unknown, text: string): TemplateResult {
   const found = findOptionalTemplateWithStaticText(value, text);

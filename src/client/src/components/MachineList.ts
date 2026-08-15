@@ -6,7 +6,7 @@ import { actionMenuPanelStyle } from "./actionMenu";
 import { renderActionActivityIndicator } from "./activityBadge";
 import type { KeyboardNavigableSection } from "./navigationFocus";
 import { activateSelectableRow, focusSelectedOrFirstSelectableRow, handleSelectableRowKeyboard } from "./selectableRow";
-import { listStyles } from "./shared";
+import { flatListRowStyles, listStyles } from "./shared";
 
 @customElement("machine-list")
 export class MachineList extends LitElement implements KeyboardNavigableSection {
@@ -152,6 +152,7 @@ export class MachineList extends LitElement implements KeyboardNavigableSection 
 
   static override styles = [
     listStyles,
+    flatListRowStyles,
     css`
       .machine-row.no-actions .action-main { border-radius: 8px; }
       .machine-primary { display: flex; align-items: baseline; gap: 6px; }
