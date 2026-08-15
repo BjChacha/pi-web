@@ -6,13 +6,17 @@
     "src/plugin-api/unstable.ts",
     "extensions/pi-web.ts",
     "pi-web-plugins/**/pi-web-plugin.ts",
-    "scripts/*.mjs"
+    "scripts/*.mjs",
+    "desktop/src/main/index.ts",
+    "desktop/src/preload/index.ts"
   ],
   "project": [
     "src/**/*.ts",
     "extensions/**/*.ts",
-    "pi-web-plugins/**/*.ts"
+    "pi-web-plugins/**/*.ts",
+    "desktop/**/*.ts"
   ],
   "ignoreExportsUsedInFile": true,
-  "ignoreBinaries": ["taskkill"]
+  "ignoreBinaries": ["taskkill", "cross-env", "electron", "electron-builder"],
+  "ignoreDependencies": ["cross-env", "electron-builder"]
 }
