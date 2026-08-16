@@ -142,6 +142,16 @@ export const en = {
   "status.queued": "{count} queued",
   "status.tokensTitle": "{direction} tokens",
   "status.costTitle": "Session cost so far",
+  "workspace.panel.files": "Files",
+  "workspace.panel.git": "Git",
+  "workspace.panel.terminal": "Terminal",
+  "workspace.panel.empty.title": "Select a workspace",
+  "workspace.panel.empty.body": "Choose a workspace to inspect files, Git, or terminals.",
+  "workspace.panel.unavailable.title": "Workspace tools unavailable",
+  "workspace.panel.unavailable.body": "Try selecting the workspace again.",
+  "workspace.panel.none.title": "No workspace tools available",
+  "workspace.panel.none.body": "No tools are available for this workspace.",
+  "chat.tab.label": "Chat",
 } satisfies Dictionary;
 
 export type MessageKey = keyof typeof en;

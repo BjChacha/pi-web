@@ -1,6 +1,8 @@
 import { LitElement, html, type TemplateResult } from "lit";
 import { customElement, property, query, state } from "lit/decorators.js";
 import type { Workspace } from "../api";
+import { isMessageKey, t } from "../i18n";
+import { LocaleController } from "../i18n/controller";
 import type { QualifiedContributionId, QualifiedWorkspacePanelContribution, WorkspacePanelContext } from "../plugins/types";
 import { workspacePanelStyles } from "./shared";
 
@@ -13,6 +15,7 @@ type WorkspacePanelBadge = string | number | TemplateResult | undefined;
 
 @customElement("workspace-panel")
 export class WorkspacePanel extends LitElement {
+  private readonly locale = new LocaleController(this);
   @property({ attribute: false }) workspace: Workspace | undefined;
   @property({ attribute: false }) panelContext: WorkspacePanelContext | undefined;
   @property({ attribute: false }) emptyState: WorkspacePanelEmptyState | undefined;
@@ -50,13 +53,13 @@ export class WorkspacePanel extends LitElement {
   override render() {
     const workspace = this.workspace;
     if (workspace === undefined) return this.renderEmptyState(this.emptyState ?? {
-      title: "Select a workspace",
-      body: "Choose a workspace to inspect files, Git, or terminals.",
+      title: t("workspace.panel.empty.title"),
+      body: t("workspace.panel.empty.body"),
     });
     const context = this.panelContext;
     if (context === undefined) return this.renderEmptyState({
-      title: "Workspace tools unavailable",
-      body: "Try selecting the workspace again.",
+      title: t("workspace.panel.unavailable.title"),
+      body: t("workspace.panel.unavailable.body"),
     });
     const visiblePanels = this.panels;
     const selectedPanel = visiblePanels.find((panel) => panel.id === this.tool) ?? visiblePanels[0];
@@ -82,8 +85,8 @@ export class WorkspacePanel extends LitElement {
         </header>
       `}
       ${selectedPanel === undefined ? this.renderEmptyState({
-        title: "No workspace tools available",
-        body: "No tools are available for this workspace.",
+        title: t("workspace.panel.none.title"),
+        body: t("workspace.panel.none.body"),
       }) : html`
         <div class="panel-content">
           ${selectedPanel.render(context)}
@@ -100,15 +103,16 @@ export class WorkspacePanel extends LitElement {
   }
 
   private panelTabAriaLabel(panel: QualifiedWorkspacePanelContribution, badge: WorkspacePanelBadge): string {
-    if (typeof badge !== "string" && typeof badge !== "number") return panel.title;
+    const title = panelTitle(panel.title);
+    if (typeof badge !== "string" && typeof badge !== "number") return title;
     const trimmedBadge = String(badge).trim();
-    return trimmedBadge === "" ? panel.title : `${panel.title}, ${trimmedBadge}`;
+    return trimmedBadge === "" ? title : `${title}, ${trimmedBadge}`;
   }
 
   private renderPanelTabContent(panel: QualifiedWorkspacePanelContribution, badge: WorkspacePanelBadge): TemplateResult {
     return html`
       ${panel.icon === undefined ? null : html`<span class="tab-custom-icon" aria-hidden="true">${panel.icon}</span>`}
-      <span class="tab-label">${panel.title}</span>
+      <span class="tab-label">${panelTitle(panel.title)}</span>
       ${this.isEmptyBadge(badge) ? null : html`<span class="tab-badge">${badge}</span>`}
     `;
   }
@@ -158,4 +162,13 @@ export class WorkspacePanel extends LitElement {
   }
 
   static override styles = workspacePanelStyles;
+}
+
+/**
+ * Core panel titles are dictionary keys (e.g. "workspace.panel.files") so they
+ * follow the interface language; third-party plugin titles are plain labels
+ * and render as-is.
+ */
+function panelTitle(title: string): string {
+  return isMessageKey(title) ? t(title) : title;
 }

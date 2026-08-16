@@ -26,6 +26,7 @@ import { selectedMachineId } from "../controllers/types";
 import { machineSessionKey } from "../machineKeys";
 import { resolveParentSessionLocation, type ParentSessionLocation } from "../parentSessionLocation";
 import { sessionTabKey } from "../sessionTabs";
+import { isMessageKey, t } from "../i18n";
 import { sessionPathsEqual } from "../sessionPaths";
 import { sessionCleanupRequestKey, sessionCleanupUnavailableMessage } from "../sessionCleanupUi";
 import { selectedNotificationView } from "../sessionNotifications";
@@ -2293,17 +2294,17 @@ export class PiWebApp extends LitElement {
     return [
       {
         id: "navigation",
-        label: "Sessions",
+        label: t("sessions.heading"),
         icon: "navigation",
         className: "navigation-tab",
         ...(unreadCount === 0 ? {} : { badge: unreadCount, badgeLabel: `${String(unreadCount)} unread`, badgeTone: "unread" }),
       },
-      { id: "chat", label: "Chat", icon: "chat" },
+      { id: "chat", label: t("chat.tab.label"), icon: "chat" },
       ...this.visibleWorkspacePanels().map((panel): AppMobileMainTab => {
         const icon = panel.icon ?? this.mobilePanelIcon(panel);
         return {
           id: panel.id,
-          label: panel.title,
+          label: isMessageKey(panel.title) ? t(panel.title) : panel.title,
           ...(icon === undefined ? {} : { icon }),
           badge: this.mobilePanelBadge(panel),
         };

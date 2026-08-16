@@ -91,6 +91,11 @@ export function onLocaleChange(listener: () => void): void {
   localeListeners.add(listener);
 }
 
+/** Whether a string is a known dictionary key (used to resolve plugin titles). */
+export function isMessageKey(value: string): value is MessageKey {
+  return value in en;
+}
+
 export function offLocaleChange(listener: () => void): void {
   localeListeners.delete(listener);
 }
