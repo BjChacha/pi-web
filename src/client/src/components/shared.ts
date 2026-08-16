@@ -135,6 +135,28 @@ export interface CompletionItem {
 	cursorOffset?: number;
 }
 
+/**
+ * Flat sidebar rows for components that render `.action-row` lists after
+ * `listStyles`: single-line flex rows with no per-row border or card surface,
+ * hover tint, selected tint, and the row menu revealed only on
+ * hover/focus/selection as an overlay instead of occupying a bordered column.
+ * Append AFTER listStyles so these rules win by cascade order.
+ */
+export const flatListRowStyles = css`
+  .action-row { position: relative; display: block; margin: 1px 0; border-radius: 6px; }
+  .action-main { display: flex; align-items: center; gap: 7px; min-height: 26px; border: 0; border-radius: 6px; background: transparent; padding: 3px 26px 3px calc(6px + var(--depth, 0) * 14px); }
+  .action-name { flex: 1 1 auto; min-width: 0; display: block; max-height: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; -webkit-line-clamp: unset; }
+  .action-main > small { flex: 0 1 auto; display: inline; min-width: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-left: auto; }
+  .action-activity { position: static; flex: 0 0 auto; top: auto; right: auto; }
+  .rename-input { width: 100%; }
+  .action-row:not(.selected):hover .action-main { background: var(--pi-surface-hover); }
+  .action-row.selected .action-main { background: var(--pi-selection-bg); color: var(--pi-text-bright); }
+  .action-menu { position: absolute; top: 4px; right: 4px; align-self: auto; }
+  .action-menu-toggle { width: 22px; height: 22px; min-width: 22px; border: 0; border-radius: 5px; background: transparent; color: var(--pi-muted); opacity: 0; }
+  .action-menu-toggle:hover, .action-menu-toggle:focus-visible { color: var(--pi-text); background: var(--pi-surface-hover); opacity: 1; }
+  .action-row:hover .action-menu-toggle, .action-row:focus-within .action-menu-toggle, .action-row.selected .action-menu-toggle { opacity: 1; }
+`;
+
 export const appStyles = css`
   /* Mobile browsers already subtract browser controls from 100dvh; reserve bottom safe area only in standalone PWA modes. */
   :host { --pi-app-safe-area-bottom: 0px; position: fixed; top: 0; right: 0; left: 0; display: block; height: 100dvh; box-sizing: border-box; overflow: hidden; padding: env(safe-area-inset-top) env(safe-area-inset-right) var(--pi-app-safe-area-bottom) env(safe-area-inset-left); color: var(--pi-text); background: var(--pi-bg); font: 14px system-ui, sans-serif; }
@@ -243,12 +265,13 @@ export const workspacePanelStyles = css`
   .workspace-header-scroll-frame::before { left: 0; background: linear-gradient(90deg, color-mix(in srgb, var(--pi-shadow-strong) 55%, transparent) 0%, transparent 100%); }
   .workspace-header-scroll-frame::after { right: 0; background: linear-gradient(270deg, color-mix(in srgb, var(--pi-shadow-strong) 55%, transparent) 0%, transparent 100%); }
   .workspace-header-scroll-frame.can-scroll-left::before, .workspace-header-scroll-frame.can-scroll-right::after { opacity: 1; }
-  .workspace-header-strip { display: flex; justify-content: space-between; align-items: center; gap: 8px; min-width: 0; padding: 8px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: thin; }
-  .tabs { flex: 0 0 auto; display: flex; gap: 6px; align-items: center; }
+  .workspace-header-strip { display: flex; justify-content: space-between; align-items: center; gap: 4px; min-width: 0; padding: 6px 8px; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: thin; }
+  .tabs { flex: 0 0 auto; display: flex; gap: 2px; align-items: center; }
   .tabs button { flex: 0 0 auto; white-space: nowrap; }
   .tabs button.icon-tab { min-width: 34px; }
-  button { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--pi-border); border-radius: 7px; background: var(--pi-surface); color: var(--pi-text); padding: 5px 7px; cursor: pointer; }
-  button.selected { border-color: var(--pi-accent); background: var(--pi-selection-bg); }
+  button { display: inline-flex; align-items: center; gap: 5px; border: 0; border-radius: 7px; background: transparent; color: var(--pi-muted); padding: 5px 9px; cursor: pointer; }
+  button:hover { color: var(--pi-text); background: var(--pi-surface-hover); }
+  button.selected { color: var(--pi-text-bright); background: var(--pi-selection-bg); }
   .tab-icon { flex: 0 0 auto; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
   .tab-custom-icon { flex: 0 0 auto; width: 16px; height: 16px; display: inline-grid; place-items: center; color: currentColor; pointer-events: none; }
   .tab-custom-icon svg { width: 16px; height: 16px; pointer-events: none; }
@@ -646,17 +669,25 @@ export const actionPaletteStyles = css`
 
 export const promptEditorStyles = css`
   :host { position: relative; z-index: 5; display: block; color: var(--pi-text); font: 14px system-ui, sans-serif; }
-  footer { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 12px; border-top: 1px solid var(--pi-border); }
-  footer.shell-mode { border-top-color: var(--pi-success); background: var(--pi-success-bg); }
-  .editor-wrap { position: relative; min-width: 0; }
-  .actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: nowrap; white-space: nowrap; }
-  .compact-status { display: flex; min-width: 0; align-items: center; gap: 6px; color: var(--pi-muted); font-size: 12px; flex: 1 1 0; }
-  .compact-status > button { flex: 0 1 auto; min-width: 0; height: 36px; box-sizing: border-box; overflow: hidden; text-overflow: ellipsis; }
+  footer { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; padding: 8px 12px 10px; }
+  footer.shell-mode .composer-card { border-color: var(--pi-success); box-shadow: 0 0 0 1px var(--pi-success-ring); }
+  /* One elevated card holds the editor and the controls row, Claude/Codex-style. */
+  .composer-card { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; border: 1px solid var(--pi-border); border-radius: 14px; background: var(--pi-surface); box-shadow: 0 2px 14px var(--pi-shadow-soft); overflow: visible; }
+  footer.shell-mode .composer-card { background: var(--pi-success-bg); }
+  .editor-wrap { position: relative; min-width: 0; padding: 0 4px; }
+  /* Toolbar row above the editor: attachment and future composer tools. */
+  .composer-tools { display: flex; align-items: center; gap: 4px; min-width: 0; padding: 6px 8px 0; }
+  .composer-tools .tool-button { width: 28px; height: 28px; }
+  .composer-tools .tool-button .prompt-action-icon { width: 16px; height: 16px; }
+  .actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: nowrap; white-space: nowrap; padding: 6px 8px 8px; }
+  .compact-status { display: flex; min-width: 0; align-items: center; gap: 6px; color: var(--pi-muted); font-size: 12px; flex: 1 1 0; border-right: 1px solid var(--pi-border-muted); padding-right: 8px; }
+  .compact-status > button { flex: 0 1 auto; min-width: 0; height: 30px; box-sizing: border-box; overflow: hidden; text-overflow: ellipsis; border: 0; background: transparent; color: var(--pi-muted); }
+  .compact-status > button:hover, .compact-status > button:focus-visible { color: var(--pi-text); background: var(--pi-surface-hover); border-radius: 6px; }
   .select-model { max-width: min(42vw, 320px); }
   .plan-mode-toggle { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; gap: 4px; padding: 4px 8px; font-size: 12px; line-height: 1; white-space: nowrap; }
   .plan-mode-toggle .prompt-plan-icon { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   .plan-mode-toggle.active { color: var(--pi-accent, var(--pi-text)); border-color: var(--pi-accent, var(--pi-border)); background: var(--pi-selection-bg, var(--pi-surface)); }
-  .icon-button { flex: 0 0 auto; display: inline-grid; place-items: center; width: 36px; height: 36px; padding: 0; }
+  .icon-button { flex: 0 0 auto; display: inline-grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; background: transparent; }
   .icon-button .prompt-action-icon, .icon-button .prompt-thinking-gauge { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
   .icon-button .prompt-action-icon-filled { fill: currentColor; stroke: none; }
   .send-button:not(:disabled) { color: var(--pi-accent, var(--pi-text)); }
@@ -664,17 +695,16 @@ export const promptEditorStyles = css`
   .select-thinking .prompt-thinking-gauge .gauge-bar { fill: currentColor; stroke: none; opacity: .28; }
   .select-thinking .prompt-thinking-gauge .gauge-bar-active { opacity: 1; }
   .editor-attach { position: absolute; right: 8px; bottom: 8px; z-index: 2; width: 30px; height: 30px; }
-  .editor-attach .prompt-action-icon { width: 16px; height: 16px; }
-  textarea, .markdown-editor .cm-editor { box-sizing: border-box; width: 100%; min-height: 54px; max-height: 220px; resize: none; overflow: hidden; border-radius: 8px; border: 1px solid var(--pi-border); background: var(--pi-bg); color: var(--pi-text); font: var(--pi-control-font-size, 16px)/1.4 var(--pi-control-font-family, system-ui, sans-serif); }
+  .editor-attach .prompt-action-icon { width: 16px; height: 16px; }  textarea, .markdown-editor .cm-editor { box-sizing: border-box; width: 100%; min-height: 54px; max-height: 220px; resize: none; overflow: hidden; border-radius: 10px; border: 1px solid transparent; background: transparent; color: var(--pi-text); font: var(--pi-control-font-size, 16px)/1.4 var(--pi-control-font-family, system-ui, sans-serif); }
   textarea { overflow-y: auto; padding: 8px; }
   .markdown-editor .cm-scroller { max-height: 220px; overflow-y: auto; font-family: var(--pi-control-font-family, system-ui, sans-serif); line-height: 1.4; }
-  .markdown-editor .cm-content { min-height: 38px; padding: 8px 44px 8px 8px; caret-color: var(--pi-text); text-align: start; unicode-bidi: plaintext; }
+  .markdown-editor .cm-content { min-height: 38px; padding: 8px 10px; caret-color: var(--pi-text); text-align: start; unicode-bidi: plaintext; }
   .markdown-editor .cm-line { padding: 0; unicode-bidi: plaintext; }
   .markdown-editor .cm-placeholder { color: var(--pi-dim); }
   .markdown-editor .cm-focused { outline: none; }
-  .shell-mode textarea, .shell-mode .markdown-editor .cm-editor { border-color: var(--pi-success); box-shadow: 0 0 0 1px var(--pi-success-ring); }
-  .mode-hint { position: absolute; right: 46px; bottom: 8px; max-width: calc(100% - 54px); border: 1px solid var(--pi-success-border); border-radius: 999px; background: var(--pi-success-surface); color: var(--pi-success); padding: 2px 8px; font-size: 12px; pointer-events: none; }
-  .attachments { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+  .shell-mode textarea, .shell-mode .markdown-editor .cm-editor { border-color: var(--pi-success); }
+  .mode-hint { position: absolute; right: 12px; bottom: 8px; max-width: calc(100% - 54px); border: 1px solid var(--pi-success-border); border-radius: 999px; background: var(--pi-success-surface); color: var(--pi-success); padding: 2px 8px; font-size: 12px; pointer-events: none; }
+  .attachments { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; padding: 8px 8px 0; }
   .attachment-chip { position: relative; width: 56px; height: 56px; border: 1px solid var(--pi-border); border-radius: 8px; overflow: hidden; background: var(--pi-bg); }
   .attachment-chip img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .attachment-chip-file { display: grid; place-items: center; }

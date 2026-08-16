@@ -5,8 +5,7 @@ import type { Machine, Project, Workspace } from "../../api";
 import type { UnreadPresence } from "../../unreadPresence";
 import { MachineList } from "../MachineList";
 import { MachineSwitcher } from "../MachineSwitcher";
-import { ProjectList } from "../ProjectList";
-import { WorkspaceList } from "../WorkspaceList";
+import { ProjectSessionTree } from "./ProjectSessionTree";
 import { AppNavigationPanel, shouldShowMachinesSection } from "./AppNavigationPanel";
 
 afterEach(() => {
@@ -25,7 +24,7 @@ describe("shouldShowMachinesSection", () => {
 });
 
 describe("unread presence wiring", () => {
-  it("feeds each unread presence slice to the matching navigation section", async () => {
+  it("feeds each unread presence slice to the matching navigation component", async () => {
     const unreadPresence: UnreadPresence = {
       machines: new Set(["remote-a"]),
       projects: new Set(["project-1"]),
@@ -36,24 +35,21 @@ describe("unread presence wiring", () => {
     panel.machines = [machine("local"), machine("remote-a")];
     panel.selectedMachine = machine("local");
     panel.projects = [project("project-1")];
-    panel.workspaces = [workspace("ws-1", "project-1")];
+    panel.workspacesByProjectId = { "project-1": [workspace("ws-1", "project-1")] };
     panel.unreadPresence = unreadPresence;
     document.body.append(panel);
     await panel.updateComplete;
 
     const switcher = panel.shadowRoot?.querySelector("machine-switcher");
     const machineList = panel.shadowRoot?.querySelector("machine-list");
-    const projectList = panel.shadowRoot?.querySelector("project-list");
-    const workspaceList = panel.shadowRoot?.querySelector("workspace-list");
+    const tree = panel.shadowRoot?.querySelector("project-session-tree");
     if (!(switcher instanceof MachineSwitcher)) throw new Error("Expected machine-switcher section");
     if (!(machineList instanceof MachineList)) throw new Error("Expected machine-list section");
-    if (!(projectList instanceof ProjectList)) throw new Error("Expected project-list section");
-    if (!(workspaceList instanceof WorkspaceList)) throw new Error("Expected workspace-list section");
+    if (!(tree instanceof ProjectSessionTree)) throw new Error("Expected project-session-tree section");
 
     expect(switcher.unreadMachineIds).toBe(unreadPresence.machines);
     expect(machineList.unreadMachineIds).toBe(unreadPresence.machines);
-    expect(projectList.unreadProjectIds).toBe(unreadPresence.projects);
-    expect(workspaceList.unreadWorkspaceIds).toBe(unreadPresence.workspaces);
+    expect(tree.unreadProjectIds).toBe(unreadPresence.projects);
   });
 });
 

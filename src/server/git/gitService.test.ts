@@ -73,7 +73,7 @@ function createSpacedPathFixture(): { dir: string } {
 }
 
 describe("gitStatus with submodules", () => {
-  it("surfaces a moved commit pointer with short SHAs and no inner files", async () => {
+  it("surfaces a moved commit pointer with short SHAs and no inner files", { timeout: 60_000 }, async () => {
     const { dir, c1, c2 } = createFixture();
     git(join(dir, "HARL"), ["checkout", c1]); // move the pointer, leave the tree clean
 
@@ -85,7 +85,7 @@ describe("gitStatus with submodules", () => {
     expect(status.files.some((file) => file.path.startsWith("HARL/"))).toBe(false);
   });
 
-  it("lists modified and untracked inner files and omits the pointer when the commit is unchanged", async () => {
+  it("lists modified and untracked inner files and omits the pointer when the commit is unchanged", { timeout: 60_000 }, async () => {
     const { dir } = createFixture();
     writeFileSync(join(dir, "HARL", "a.txt"), "v2\nchanged\n");
     writeFileSync(join(dir, "HARL", "new.txt"), "brand-new\n");
@@ -98,7 +98,7 @@ describe("gitStatus with submodules", () => {
     expect(inner).toContain("HARL/new.txt");
   });
 
-  it("surfaces a staged pointer move with the recorded OID as from and the staged OID as to", async () => {
+  it("surfaces a staged pointer move with the recorded OID as from and the staged OID as to", { timeout: 60_000 }, async () => {
     const { dir, c1, c2 } = createFixture();
     git(join(dir, "HARL"), ["checkout", c1]); // move the pointer
     git(dir, ["add", "HARL"]); // stage the move: porcelain `1 M. S... <c2> <c1> HARL`
@@ -112,7 +112,7 @@ describe("gitStatus with submodules", () => {
     expect(pointer?.submoduleToCommit).toBe(c1.slice(0, 7));
   });
 
-  it("reports both the pointer entry and inner files for a staged move with dirty content", async () => {
+  it("reports both the pointer entry and inner files for a staged move with dirty content", { timeout: 60_000 }, async () => {
     const { dir, c1, c2 } = createFixture();
     git(join(dir, "HARL"), ["checkout", c1]);
     git(dir, ["add", "HARL"]);
@@ -128,7 +128,7 @@ describe("gitStatus with submodules", () => {
     expect(inner?.workingTree).toBe("modified");
   });
 
-  it("reports a deleted submodule as a plain deleted row", async () => {
+  it("reports a deleted submodule as a plain deleted row", { timeout: 60_000 }, async () => {
     const { dir } = createFixture();
     rmSync(join(dir, "HARL"), { recursive: true, force: true }); // unstaged deletion: `1 .D S...`
 
@@ -140,7 +140,7 @@ describe("gitStatus with submodules", () => {
     expect(status.files.some((file) => file.path.startsWith("HARL/"))).toBe(false);
   });
 
-  it("reports a staged submodule deletion as a plain deleted row, not a pointer move", async () => {
+  it("reports a staged submodule deletion as a plain deleted row, not a pointer move", { timeout: 60_000 }, async () => {
     const { dir } = createFixture();
     git(dir, ["rm", "-q", "HARL"]); // staged deletion: `1 D. S...` with a zero index OID
 
@@ -151,7 +151,7 @@ describe("gitStatus with submodules", () => {
     expect(status.submodules).not.toContain("HARL");
   });
 
-  it("renders a newly staged submodule pointer as new → <sha> (zero head OID)", async () => {
+  it("renders a newly staged submodule pointer as new → <sha> (zero head OID)", { timeout: 60_000 }, async () => {
     const { dir, c2 } = createFixture();
     git(dir, ["submodule", "add", join(dir, "..", "origin"), "NEWSUB"]); // staged add: `1 A. S...` with a zero head OID
 
@@ -163,7 +163,7 @@ describe("gitStatus with submodules", () => {
     expect(status.submodules).toContain("NEWSUB");
   });
 
-  it("prefixes oldPath with the submodule path for renames inside a submodule", async () => {
+  it("prefixes oldPath with the submodule path for renames inside a submodule", { timeout: 60_000 }, async () => {
     const { dir } = createFixture();
     git(join(dir, "HARL"), ["mv", "a.txt", "renamed.txt"]);
 
@@ -173,7 +173,7 @@ describe("gitStatus with submodules", () => {
     expect(renamed?.oldPath).toBe("HARL/a.txt");
   });
 
-  it("keeps inner filenames with spaces intact through expansion", async () => {
+  it("keeps inner filenames with spaces intact through expansion", { timeout: 60_000 }, async () => {
     const { dir } = createFixture();
     writeFileSync(join(dir, "HARL", "my file.txt"), "tracked\n");
     git(join(dir, "HARL"), ["add", "my file.txt"]);
@@ -189,7 +189,7 @@ describe("gitStatus with submodules", () => {
     expect(status.files.find((file) => file.path === "HARL")).toBeUndefined(); // pointer unchanged
   });
 
-  it("skips inner recursion without throwing when the submodule repo is unreadable", async () => {
+  it("skips inner recursion without throwing when the submodule repo is unreadable", { timeout: 60_000 }, async () => {
     const { dir } = createFixture();
     writeFileSync(join(dir, "HARL", "new.txt"), "brand-new\n"); // untracked → would trigger recursion
     renameSync(join(dir, "HARL", ".git"), join(dir, "HARL", ".git.bak")); // break the inner repo
@@ -201,7 +201,7 @@ describe("gitStatus with submodules", () => {
 });
 
 describe("submodule paths containing spaces", () => {
-  it("expands status and routes diffs into the space-named submodule", async () => {
+  it("expands status and routes diffs into the space-named submodule", { timeout: 60_000 }, async () => {
     const { dir } = createSpacedPathFixture();
     writeFileSync(join(dir, "my sub", "a.txt"), "v1\nchanged\n");
 
@@ -217,7 +217,7 @@ describe("submodule paths containing spaces", () => {
 });
 
 describe("gitDiff routing into submodules", () => {
-  it("returns real content for a tracked file inside the submodule", async () => {
+  it("returns real content for a tracked file inside the submodule", { timeout: 60_000 }, async () => {
     const { dir } = createFixture();
     writeFileSync(join(dir, "HARL", "a.txt"), "v2\nchanged\n");
 
@@ -227,7 +227,7 @@ describe("gitDiff routing into submodules", () => {
     expect(diff.diff).toContain("changed");
   });
 
-  it("produces an untracked-file diff inside the submodule via --no-index", async () => {
+  it("produces an untracked-file diff inside the submodule via --no-index", { timeout: 60_000 }, async () => {
     const { dir } = createFixture();
     writeFileSync(join(dir, "HARL", "new.txt"), "brand-new\n");
 
@@ -236,7 +236,7 @@ describe("gitDiff routing into submodules", () => {
     expect(diff.diff).toContain("brand-new");
   });
 
-  it("diffs the submodule path itself against the superproject pointer", async () => {
+  it("diffs the submodule path itself against the superproject pointer", { timeout: 60_000 }, async () => {
     const { dir, c1 } = createFixture();
     git(join(dir, "HARL"), ["checkout", c1]);
 

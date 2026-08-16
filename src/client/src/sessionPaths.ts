@@ -14,7 +14,9 @@
  * symlinks, which the server already handles before values reach the browser.
  */
 export function normalizeSessionPath(path: string): string {
-  return path.replace(/[/\\]+$/u, "");
+  // Unify separator direction first (Windows producers emit both F:\\... and
+  // F:/... for the same location), then trim trailing separators.
+  return path.replace(/\\/gu, "/").replace(/[/\\]+$/u, "");
 }
 
 /** Whether two server-produced absolute paths refer to the same location. */

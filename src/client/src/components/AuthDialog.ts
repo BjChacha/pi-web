@@ -1,11 +1,16 @@
 import { LitElement, css, html } from "lit";
+
+import { t } from "../i18n";
 import { customElement, property, query } from "lit/decorators.js";
+import { LocaleController } from "../i18n/controller";
 import type { AuthDialogState } from "../appState";
 import type { AuthProviderOption, OAuthFlowState } from "../api";
 import { commandPickerStyles } from "./shared";
 
 @customElement("auth-dialog")
 export class AuthDialog extends LitElement {
+
+  private readonly locale = new LocaleController(this);
   @property({ attribute: false }) state?: AuthDialogState;
   @property({ attribute: false }) onChooseMethod?: (authType: "oauth" | "api_key") => void;
   @property({ attribute: false }) onSelectProvider?: (providerId: string, authType: "oauth" | "api_key") => void;
@@ -27,7 +32,7 @@ export class AuthDialog extends LitElement {
         <section @mousedown=${(event: MouseEvent) => { event.stopPropagation(); }} @keydown=${(event: KeyboardEvent) => { this.handleKeyDown(event); }}>
           <header>
             <strong>${this.dialogTitle(state)}</strong>
-            <button title="Close" @click=${() => { this.cancel(); }}>×</button>
+            <button title=${t("palette.close")} @click=${() => { this.cancel(); }}>×</button>
           </header>
           ${this.renderBody(state)}
         </section>
@@ -41,11 +46,11 @@ export class AuthDialog extends LitElement {
 
   private dialogTitle(state: AuthDialogState): string {
     switch (state.step) {
-      case "method": return "Configure provider authentication";
-      case "providers": return state.authType === undefined ? "Select provider authentication" : state.authType === "oauth" ? "Select subscription provider" : "Select credential provider";
+      case "method": return t("auth.heading");
+      case "providers": return state.authType === undefined ? t("auth.selectAuth") : state.authType === "oauth" ? t("auth.selectSubscription") : t("auth.selectCredential");
       case "apiKey": return `API key for ${state.provider.name}`;
       case "oauth": return `Login to ${state.flow.providerName}`;
-      case "logout": return "Remove stored provider authentication";
+      case "logout": return t("auth.removeAuth");
     }
   }
 
@@ -61,9 +66,9 @@ export class AuthDialog extends LitElement {
       case "apiKey": return html`
         <div class="form">
           <p>Enter the API key for <strong>${state.provider.name}</strong>. It will be stored in the active Pi-compatible profile's <code>auth.json</code>.</p>
-          <input type="password" autocomplete="off" placeholder="API key" .value=${state.value} @input=${(event: Event) => { if (event.target instanceof HTMLInputElement) this.onApiKeyInput?.(event.target.value); }}>
+          <input type="password" autocomplete="off" placeholder=t("auth.apiKey") .value=${state.value} @input=${(event: Event) => { if (event.target instanceof HTMLInputElement) this.onApiKeyInput?.(event.target.value); }}>
           ${state.error !== undefined && state.error !== "" ? html`<div class="error-text">${state.error}</div>` : null}
-          <div class="actions"><button @click=${() => { this.cancel(); }}>Cancel</button><button class="primary" ?disabled=${state.saving === true} @click=${() => { this.onSaveApiKey?.(); }}>${state.saving === true ? "Saving…" : "Save API key"}</button></div>
+          <div class="actions"><button @click=${() => { this.cancel(); }}>Cancel</button><button class="primary" ?disabled=${state.saving === true} @click=${() => { this.onSaveApiKey?.(); }}>${state.saving === true ? t("auth.saving") : t("auth.saveApiKey")}</button></div>
         </div>
       `;
       case "oauth": return this.renderOAuth(state);
@@ -98,7 +103,7 @@ export class AuthDialog extends LitElement {
         ` : html`<p>Starting login flow…</p>`}
         ${flow.progress.length > 0 ? html`<ul class="progress">${flow.progress.map((line) => html`<li>${line}</li>`)}</ul>` : null}
         ${flow.info?.map((item) => item.links === undefined || item.links.length === 0 ? null : html`
-          <div class="info-links" aria-label="Related information">
+          <div class="info-links" aria-label=t("auth.relatedInfo")>
             ${item.links.map((link) => html`<a href=${link.url} target="_blank" rel="noreferrer" title=${item.message}>${link.label ?? link.url}</a>`)}
           </div>
         `) ?? null}

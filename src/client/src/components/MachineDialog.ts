@@ -1,4 +1,6 @@
 import { LitElement, css, html } from "lit";
+import { t } from "../i18n";
+import { LocaleController } from "../i18n/controller";
 import { customElement, property, query, state } from "lit/decorators.js";
 
 export interface MachineDialogSubmit {
@@ -9,6 +11,7 @@ export interface MachineDialogSubmit {
 
 @customElement("machine-dialog")
 export class MachineDialog extends LitElement {
+  private readonly locale = new LocaleController(this);
   @property({ attribute: false }) onSubmit?: (input: MachineDialogSubmit) => void | Promise<void>;
   @property({ attribute: false }) onCancel?: () => void;
   @property() error = "";
@@ -95,8 +98,8 @@ export class MachineDialog extends LitElement {
         <section @click=${(event: Event) => { event.stopPropagation(); }}>
           <form @submit=${(event: SubmitEvent) => { this.handleSubmit(event); }} @keydown=${(event: KeyboardEvent) => { this.handleKeyDown(event); }}>
             <header>
-              <strong>Add machine</strong>
-              <button type="button" @click=${() => { this.onCancel?.(); }} aria-label="Close">×</button>
+              <strong>${t("machine.add")}</strong>
+              <button type="button" @click=${() => { this.onCancel?.(); }} aria-label=${t("palette.close")}>×</button>
             </header>
             <div class="body">
               ${this.error === "" ? null : html`<div class="dialog-error" role="alert">${this.error}</div>`}
@@ -108,19 +111,19 @@ export class MachineDialog extends LitElement {
               ${hasUrl ? html`
                 <label>
                   Machine name
-                  <input name="name" type="text" .value=${this.name} @input=${(event: InputEvent) => { this.handleNameInput(event); }} placeholder=${this.previousSuggestedName || "Dev Box"} autocomplete="off" />
+                  <input name="name" type="text" .value=${this.name} @input=${(event: InputEvent) => { this.handleNameInput(event); }} placeholder=${this.previousSuggestedName || t("machine.namePlaceholder")} autocomplete="off" />
                 </label>
                 <small class="hint">Suggested from the URL. Edit it to use a friendlier sidebar label.</small>
                 <label>
                   Bearer token <span class="optional">optional</span>
-                  <input name="token" type="password" .value=${this.token} @input=${(event: InputEvent) => { this.handleTokenInput(event); }} placeholder="Leave blank if the remote machine does not require one" autocomplete="off" />
+                  <input name="token" type="password" .value=${this.token} @input=${(event: InputEvent) => { this.handleTokenInput(event); }} placeholder=${t("machine.tokenHint")} autocomplete="off" />
                 </label>
                 <small class="hint">Paste only the token value; PI WEB sends it as an Authorization: Bearer header.</small>
               ` : html`<p class="hint intro">After you enter a URL, PI WEB will suggest a machine name and let you add an optional bearer token.</p>`}
             </div>
             <footer>
-              <button type="button" @click=${() => { this.onCancel?.(); }}>Cancel</button>
-              <button class="primary" type="submit" ?disabled=${!canSubmit}>${this.submitting ? "Adding…" : "Add machine"}</button>
+              <button type="button" @click=${() => { this.onCancel?.(); }}>${t("cleanup.cancel")}</button>
+              <button class="primary" type="submit" ?disabled=${!canSubmit}>${this.submitting ? t("machine.adding") : t("machine.add")}</button>
             </footer>
           </form>
         </section>
@@ -161,16 +164,16 @@ export function suggestedMachineNameFromUrl(value: string): string {
 
 export function machineBaseUrlValidationMessage(value: string): string | undefined {
   const raw = value.trim();
-  if (raw === "") return "Remote PI WEB URL is required.";
+  if (raw === "") return t("machine.urlRequired");
   let url: URL;
   try {
     url = new URL(raw);
   } catch {
-    return "Enter a valid URL including http:// or https://.";
+    return t("machine.invalidUrl");
   }
-  if (url.protocol !== "http:" && url.protocol !== "https:") return "Use an http:// or https:// URL.";
-  if (url.username !== "" || url.password !== "") return "Do not include credentials in the machine URL.";
-  if (url.search !== "" || url.hash !== "") return "Do not include a query string or fragment.";
+  if (url.protocol !== "http:" && url.protocol !== "https:") return t("machine.urlInvalid");
+  if (url.username !== "" || url.password !== "") return t("machine.urlNoCredentials");
+  if (url.search !== "" || url.hash !== "") return t("machine.urlNoQuery");
   return undefined;
 }
 

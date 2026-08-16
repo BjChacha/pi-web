@@ -55,6 +55,15 @@ export function handleSelectableRowKeyboard(event: SelectableNavigationKeyboardE
   return false;
 }
 
+export function focusLastSelectableRow(root: ParentNode): boolean {
+  const rows = Array.from(root.querySelectorAll<HTMLElement>(".action-row"));
+  const target = rows[rows.length - 1];
+  if (target === undefined) return false;
+  target.focus();
+  target.scrollIntoView({ block: "nearest" });
+  return true;
+}
+
 export function focusSelectedOrFirstSelectableRow(root: ParentNode, options: { fallbackSelector?: string | undefined } = {}): boolean {
   const target = root.querySelector<HTMLElement>(".action-row.selected")
     ?? root.querySelector<HTMLElement>(".action-row")

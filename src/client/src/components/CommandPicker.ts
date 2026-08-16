@@ -1,4 +1,6 @@
 import { LitElement, html } from "lit";
+import { t } from "../i18n";
+import { LocaleController } from "../i18n/controller";
 import { customElement, property, state } from "lit/decorators.js";
 import type { CommandOption } from "../api";
 import { scrollWhenSelected } from "./scrollWhenSelected";
@@ -6,6 +8,8 @@ import { commandPickerStyles } from "./shared";
 
 @customElement("command-picker")
 export class CommandPicker extends LitElement {
+  private readonly locale = new LocaleController(this);
+
   @property() override title = "Select";
   @property({ type: Boolean }) searchable = false;
   @property({ attribute: false }) options: CommandOption[] = [];
@@ -24,7 +28,7 @@ export class CommandPicker extends LitElement {
             <strong>${this.title}</strong>
             <button @click=${() => this.onCancel?.()}>×</button>
           </header>
-          ${this.searchable ? html`<input placeholder="Search" .value=${this.query} @input=${(event: Event) => { this.handleSearchInput(event); }} @keydown=${(event: KeyboardEvent) => { this.handleKeyDown(event); }}>` : null}
+          ${this.searchable ? html`<input placeholder=${t("picker.search")} .value=${this.query} @input=${(event: Event) => { this.handleSearchInput(event); }} @keydown=${(event: KeyboardEvent) => { this.handleKeyDown(event); }}>` : null}
           <div class="options" @keydown=${(event: KeyboardEvent) => { this.handleKeyDown(event); }} tabindex="0">
             ${options.map((option, index) => html`
               <button class=${index === this.selectedIndex ? "selected" : ""} ${scrollWhenSelected(index === this.selectedIndex, option.value)} @click=${() => this.onPick?.(option.value)}>

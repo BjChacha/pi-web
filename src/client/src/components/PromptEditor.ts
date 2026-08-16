@@ -60,6 +60,8 @@ import {
 	shouldSendPromptOnEnterShortcut,
 	shouldUsePromptEnterShiftShortcut,
 } from "../promptEnterBehavior";
+import { t } from "../i18n";
+import { LocaleController } from "../i18n/controller";
 import { promptEditorStyles, type CompletionItem } from "./shared";
 import {
 	renderAttachIcon,
@@ -98,6 +100,7 @@ export function planModeCommandName(
 
 @customElement("prompt-editor")
 export class PromptEditor extends LitElement {
+	private readonly locale = new LocaleController(this);
 	@property({ type: Boolean }) disabled = false;
 	@property() sessionId?: string;
 	@property() cwd?: string;
@@ -218,18 +221,21 @@ export class PromptEditor extends LitElement {
 			}} @drop=${(event: DragEvent) => {
 				void this.handleDrop(event);
 			}}>
+        <div class="composer-card">
+        <div class="composer-tools" role="toolbar" aria-label=${t("composer.toolsAria")}>
+          <button class="icon-button tool-button attach-button" ?disabled=${busy} title=${t("composer.attach")} aria-label=${t("composer.attach")} @click=${() => {
+						this.attachmentInput?.click();
+					}}>${renderAttachIcon()}</button>
+        </div>
         <div class="editor-wrap">
-          <div class=${`markdown-editor${this.disabled ? " markdown-editor-disabled" : ""}`} aria-label="Message pi" aria-disabled=${this.disabled ? "true" : "false"}></div>
+          <div class=${`markdown-editor${this.disabled ? " markdown-editor-disabled" : ""}`} aria-label=${t("composer.ariaLabel")} aria-disabled=${this.disabled ? "true" : "false"}></div>
           <input class="attachment-input" type="file" multiple hidden @change=${(
 						event: Event,
 					) => {
 						void this.handleFileInput(event);
 					}} />
-          <button class="editor-attach icon-button" ?disabled=${busy} title="Attach files" aria-label="Attach files" @click=${() => {
-						this.attachmentInput?.click();
-					}}>${renderAttachIcon()}</button>
-          ${shellMode ? html`<div class="mode-hint">Shell command${shellInputMode.excludeFromContext ? " · excluded from context" : ""}</div>` : null}
-          ${this.isCompacting && !shellMode ? html`<div class="mode-hint">Compacting history · message will be queued</div>` : null}
+          ${shellMode ? html`<div class="mode-hint">${t("composer.shellMode")}${shellInputMode.excludeFromContext ? t("composer.shellExcluded") : ""}</div>` : null}
+          ${this.isCompacting && !shellMode ? html`<div class="mode-hint">${t("composer.compacting")}</div>` : null}
           ${this.renderAttachments()}
           <autocomplete-menu .items=${this.completions} .selectedIndex=${this.selectedIndex} .onPick=${(
 						item: CompletionItem,
@@ -239,17 +245,21 @@ export class PromptEditor extends LitElement {
         </div>
         <div class="actions">
           ${this.renderCompactStatus()}
-          <button class="icon-button send-button" ?disabled=${busy} title=${queuesInput ? "Queue until the current activity finishes" : "Send message"} aria-label=${queuesInput ? "Queue message" : "Send message"} @click=${() => {
-						this.send("followUp");
-					}}>${queuesInput ? renderQueueIcon() : renderSendIcon()}</button>
           ${
 						this.canSteer && !this.isCompacting
-							? html`<button class="icon-button steer-button" ?disabled=${busy} title="Steer the current response before the next model call" aria-label="Steer current response" @click=${() => {
+							? html`<button class="icon-button steer-button" ?disabled=${busy} title=${t("composer.steer")} aria-label=${t("composer.steerAria")} @click=${() => {
 									this.send("steer");
 								}}>${renderSteerIcon()}</button>`
 							: null
 					}
-          <button class="icon-button stop-button" ?disabled=${this.disabled || !this.canStop} title=${this.canStop ? "Stop current work and clear queued messages" : "Nothing running"} aria-label="Stop current work" @click=${() => this.onStop?.()}>${renderStopIcon()}</button>
+          ${
+						this.canStop
+							? html`<button class="icon-button stop-button" title=${t("composer.stop")} aria-label=${t("composer.stopAria")} @click=${() => this.onStop?.()}>${renderStopIcon()}</button>`
+							: html`<button class="icon-button send-button" ?disabled=${busy} title=${queuesInput ? t("composer.queue") : t("composer.send")} aria-label=${queuesInput ? t("composer.queueAria") : t("composer.sendAria")} @click=${() => {
+										this.send("followUp");
+									}}>${queuesInput ? renderQueueIcon() : renderSendIcon()}</button>`
+					}
+        </div>
         </div>
       </footer>
     `;
@@ -291,7 +301,7 @@ export class PromptEditor extends LitElement {
 	private renderCompactStatus() {
 		const status = this.status;
 		if (status === undefined) return null;
-		const model = status.model?.id ?? "no model";
+		const model = status.model?.id ?? t("composer.noModel");
 		const provider =
 			status.model?.provider !== undefined && status.model.provider !== ""
 				? `${status.model.provider}/`
@@ -300,14 +310,14 @@ export class PromptEditor extends LitElement {
 		// optimistic view when the daemon doesn't report it (older daemon, or empty).
 		const planModeActive = status.planModeActive ?? this.localPlanModeActive;
 		return html`
-      <div class="compact-status" aria-label="Session status">
-        <button class="select-model" title="Select model" @click=${() => this.onSelectModel?.()}>${provider}${model}</button>
-        <button class="select-thinking icon-button" title=${`Thinking level: ${thinkingLevelLabel(status.thinkingLevel)}`} aria-label=${`Thinking level: ${thinkingLevelLabel(status.thinkingLevel)}`} @click=${() => this.onSelectThinking?.()}>${renderThinkingGauge(thinkingGauge(status.thinkingLevel, this.availableThinkingLevels))}</button>
+      <div class="compact-status" aria-label=${t("composer.statusAria")}>
+        <button class="select-model" title=${t("composer.selectModel")} @click=${() => this.onSelectModel?.()}>${provider}${model}</button>
+        <button class="select-thinking icon-button" title=${t("composer.thinkingLevel", { level: thinkingLevelLabel(status.thinkingLevel) })} aria-label=${t("composer.thinkingLevel", { level: thinkingLevelLabel(status.thinkingLevel) })} @click=${() => this.onSelectThinking?.()}>${renderThinkingGauge(thinkingGauge(status.thinkingLevel, this.availableThinkingLevels))}</button>
         ${
 					this.planCommandName === undefined
 						? null
 						: html`
-          <button class=${`plan-mode-toggle${planModeActive ? " active" : ""}`} title=${`Plan mode: ${planModeActive ? "on" : "off"} — click to toggle (runs /${this.planCommandName})`} aria-label=${`Toggle plan mode, currently ${planModeActive ? "on" : "off"}`} aria-pressed=${String(planModeActive)} @click=${this.handleTogglePlan}>${renderPlanIcon()}<span>Plan</span></button>
+          <button class=${`plan-mode-toggle${planModeActive ? " active" : ""}`} title=${planModeActive ? t("composer.planOn", { command: this.planCommandName }) : t("composer.planOff", { command: this.planCommandName })} aria-label=${t("composer.planAria", { state: planModeActive ? t("composer.planOnState") : t("composer.planOffState") })} aria-pressed=${String(planModeActive)} @click=${this.handleTogglePlan}>${renderPlanIcon()}<span>Plan</span></button>
         `
 				}
       </div>

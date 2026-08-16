@@ -8,14 +8,14 @@ export function createCoreWorkspacePanels(): WorkspacePanelContribution[] {
   return [
     {
       id: "workspace.files",
-      title: "Files",
+      title: "workspace.panel.files",
       icon: renderBuiltinTabIcon("files"),
       order: 10,
       render: renderFiles,
     },
     {
       id: "workspace.git",
-      title: "Git",
+      title: "workspace.panel.git",
       icon: renderBuiltinTabIcon("git"),
       order: 20,
       visible: ({ workspace }) => workspace.isGitRepo,
@@ -23,7 +23,7 @@ export function createCoreWorkspacePanels(): WorkspacePanelContribution[] {
     },
     {
       id: "workspace.terminal",
-      title: "Terminal",
+      title: "workspace.panel.terminal",
       icon: renderBuiltinTabIcon("terminal"),
       order: 30,
       badge: (context) => context.activeTerminalCount > 0 ? context.activeTerminalCount : undefined,
