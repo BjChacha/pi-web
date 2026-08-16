@@ -112,3 +112,23 @@ describe("projectSessionEntry", () => {
     expect(entry.worktreeLabel).toBe("auth");
   });
 });
+
+const WIN_SEP = String.fromCharCode(92);
+function backslashPath(drive: string, ...segments: string[]): string {
+  return [drive, ...segments].join(WIN_SEP);
+}
+
+describe("buildProjectSessionList Windows path separators", () => {
+  it("matches session cwds against workspace paths across separator styles", () => {
+    const node = first(buildProjectSessionList({
+      ...baseInputs,
+      projects: [project("alpha", "Alpha")],
+      // Server shape: workspace paths use forward slashes...
+      workspacesByProjectId: { alpha: [{ ...workspace("main", "alpha", { main: true }), path: "F:/Projects/alpha" }] },
+      // ...while session cwds come back with backslashes.
+      sessionsByWorkspacePath: { "F:/Projects/alpha": [session("s1", backslashPath("F:", "Projects", "alpha"), "2026-01-01T00:00:00.000Z")] },
+    }));
+
+    expect(node.sessions.map((entry) => entry.session.id)).toEqual(["s1"]);
+  });
+});

@@ -1,4 +1,5 @@
 import type { Project, SessionInfo, Workspace } from "./api";
+import { sessionPathsEqual } from "./sessionPaths";
 
 /**
  * Two-level navigation model: project → sessions. Sessions from every
@@ -44,7 +45,7 @@ export function buildProjectSessionList(inputs: ProjectSessionListInputs): Proje
         ? inputs.selectedSessions
         : inputs.sessionsByWorkspacePath[workspace.path] ?? [];
       for (const session of workspaceSessions) {
-        if (session.cwd !== workspace.path) continue;
+        if (!sessionPathsEqual(session.cwd, workspace.path)) continue;
         entries.push(projectSessionEntry(session, workspace));
       }
     }

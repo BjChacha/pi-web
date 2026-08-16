@@ -26,6 +26,7 @@ import { selectedMachineId } from "../controllers/types";
 import { machineSessionKey } from "../machineKeys";
 import { resolveParentSessionLocation, type ParentSessionLocation } from "../parentSessionLocation";
 import { sessionTabKey } from "../sessionTabs";
+import { sessionPathsEqual } from "../sessionPaths";
 import { sessionCleanupRequestKey, sessionCleanupUnavailableMessage } from "../sessionCleanupUi";
 import { selectedNotificationView } from "../sessionNotifications";
 import { hasAuthoritativeSessionPersistence as runtimeHasAuthoritativeSessionPersistence } from "../sessionPersistence";
@@ -70,6 +71,7 @@ import "./SettingsDialog";
 import "./WorkspacePanel";
 import type { WorkspacePanelEmptyState } from "./WorkspacePanel";
 import "./appShell/AppContextBar";
+import "./appShell/ChatContextBar";
 import "./appShell/AppMobileMainTabs";
 import type { AppMobileMainTab, AppMobileMainTabIcon } from "./appShell/AppMobileMainTabs";
 import { shouldShowMachinesSection, type AppNavigationPanel, type NavigationFocusTarget } from "./appShell/AppNavigationPanel";
@@ -1452,7 +1454,7 @@ export class PiWebApp extends LitElement {
 
   private workspaceForSessionCwd(cwd: string): Workspace | undefined {
     for (const workspaces of Object.values(this.state.workspacesByProjectId)) {
-      const match = workspaces.find((workspace) => workspace.path === cwd);
+      const match = workspaces.find((workspace) => sessionPathsEqual(workspace.path, cwd));
       if (match !== undefined) return match;
     }
     return undefined;
@@ -2214,6 +2216,18 @@ export class PiWebApp extends LitElement {
     `;
   }
 
+  private renderChatContextBar() {
+    return html`
+      <chat-context-bar
+        .project=${this.state.selectedProject}
+        .workspace=${this.state.selectedWorkspace}
+        .workspaceDeleting=${this.state.selectedWorkspace !== undefined && isWorkspaceDeletionPending(this.state, this.state.selectedWorkspace)}
+        .onFocusTree=${() => { void this.focusNavigationSection("tree"); }}
+        .onDeleteWorkspace=${(workspace: Workspace) => { void this.deleteWorkspace(workspace); }}
+      ></chat-context-bar>
+    `;
+  }
+
   private renderContextBar() {
     if (!this.appShell.isMobileNavigationLayout) return null;
     return html`
@@ -2309,6 +2323,7 @@ export class PiWebApp extends LitElement {
         ${this.renderNavigationPanelEdgeControl()}
         <main class=${mainViewClass(state.mainView)}>
           ${this.renderContextBar()}
+          ${this.appShell.isMobileNavigationLayout ? null : this.renderChatContextBar()}
           ${this.renderMobileMainTabs()}
           ${state.error ? html`<div class="error">${state.error}</div>` : null}
           <div class="mobile-navigation-panel">${this.appShell.isMobileNavigationLayout ? this.renderNavigationPanel() : null}</div>
