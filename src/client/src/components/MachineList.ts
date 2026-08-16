@@ -7,10 +7,13 @@ import { renderActionActivityIndicator } from "./activityBadge";
 import type { KeyboardNavigableSection } from "./navigationFocus";
 import { activateSelectableRow, focusSelectedOrFirstSelectableRow, handleSelectableRowKeyboard } from "./selectableRow";
 import { flatListRowStyles, listStyles } from "./shared";
+import { t } from "../i18n";
+import { LocaleController } from "../i18n/controller";
 
 @customElement("machine-list")
 export class MachineList extends LitElement implements KeyboardNavigableSection {
-  @property({ attribute: false }) machines: Machine[] = [];
+
+  private readonly locale = new LocaleController(this);  @property({ attribute: false }) machines: Machine[] = [];
   @property({ attribute: false }) selected?: Machine;
   @property({ attribute: false }) statuses: Record<string, MachineHealth> = {};
   @property({ attribute: false }) activities: Record<string, Record<string, WorkspaceActivity>> = {};
@@ -76,7 +79,7 @@ export class MachineList extends LitElement implements KeyboardNavigableSection 
         @keydown=${(event: KeyboardEvent) => { this.handleMachineKeydown(event, machine); }}
       >
         <div class="action-main">
-          <span class="action-name machine-primary"><span class="machine-primary-label">${machine.name}</span></span><small>${machine.kind === "local" ? "Local Pi Web" : machine.baseUrl ?? "Remote Pi Web"} · ${statusLabel}</small>
+          <span class="action-name machine-primary"><span class="machine-primary-label">${machine.name}</span></span><small>${machine.kind === "local" ? t("machine.localPiWeb") : machine.baseUrl ?? t("machine.remotePiWeb")} · ${statusLabel}</small>
           ${this.renderActivity(machine)}
         </div>
         ${hasRemoveAction ? this.renderMachineMenu(machine) : null}
@@ -89,8 +92,8 @@ export class MachineList extends LitElement implements KeyboardNavigableSection 
     // Unread survives offline: an offline machine keeps its last-known unread
     // state (stale-but-present still counts), so only the work dot is gated.
     const kind = status === "offline" || status === "error" ? undefined : machineActivityIndicator(this.activities[machine.id]);
-    const unreadLabel = this.unreadMachineIds.has(machine.id) ? "Unread sessions on this machine" : undefined;
-    return renderActionActivityIndicator(kind, kind === "terminal" ? "Machine terminal active" : "Machine active", unreadLabel);
+    const unreadLabel = this.unreadMachineIds.has(machine.id) ? t("machine.unread") : undefined;
+    return renderActionActivityIndicator(kind, kind === "terminal" ? t("machine.terminalActive") : t("machine.active"), unreadLabel);
   }
 
   private renderMachineMenu(machine: Machine) {
@@ -100,8 +103,8 @@ export class MachineList extends LitElement implements KeyboardNavigableSection 
       <div class="action-menu">
         <button
           class="action-menu-toggle"
-          title="Machine actions"
-          aria-label=${`Actions for ${machine.name}`}
+          title=${t("machine.actions")}
+          aria-label=${t("machine.actionsFor", { name: machine.name })}
           aria-expanded=${String(open)}
           aria-controls=${menuId}
           @click=${(event: MouseEvent) => { event.stopPropagation(); this.toggleMenu(machine.id, event.currentTarget); }}
@@ -116,10 +119,10 @@ export class MachineList extends LitElement implements KeyboardNavigableSection 
   }
 
   private renderHeading() {
-    if (!this.collapsible) return html`<span>Machines</span>`;
-    const selectedSummary = this.selected?.name ?? "No machine selected";
+    if (!this.collapsible) return html`<span>${t("machine.heading")}</span>`;
+    const selectedSummary = this.selected?.name ?? t("machine.noneSelected");
     const selectedTitle = this.selected?.baseUrl ?? selectedSummary;
-    return html`<button class="section-toggle" aria-expanded=${String(!this.collapsed)} @click=${() => { this.onToggleCollapsed?.(); }}><span class="section-title"><span class="section-name">${this.collapsed ? "▸" : "▾"} Machines</span>${this.collapsed ? html`<small class="section-selected" title=${selectedTitle}>${selectedSummary}</small>` : null}</span><small class="section-count">${this.machines.length}</small></button>`;
+    return html`<button class="section-toggle" aria-expanded=${String(!this.collapsed)} @click=${() => { this.onToggleCollapsed?.(); }}><span class="section-title"><span class="section-name">${this.collapsed ? "▸" : "▾"} ${t("machine.heading")}</span>${this.collapsed ? html`<small class="section-selected" title=${selectedTitle}>${selectedSummary}</small>` : null}</span><small class="section-count">${this.machines.length}</small></button>`;
   }
 
   private toggleMenu(machineId: string, target: EventTarget | null): void {

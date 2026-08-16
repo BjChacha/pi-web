@@ -1,4 +1,6 @@
 import { css, html, LitElement, type PropertyValues, type TemplateResult } from "lit";
+import { t } from "../i18n";
+import { LocaleController } from "../i18n/controller";
 import { customElement, property, state } from "lit/decorators.js";
 import type { GitDiffResponse, GitStatusFile, GitStatusResponse } from "../api";
 import { buildGitFileTree, collectGitFileTreeDirectoryPaths, type GitFileTreeNode } from "../gitFileTree";
@@ -24,6 +26,7 @@ const EMPTY_VIEW_STATE: GitViewState = { nodes: [], listModel: EMPTY_LIST_MODEL,
 
 @customElement("workspace-git-panel")
 export class WorkspaceGitPanel extends LitElement {
+  private readonly locale = new LocaleController(this);
   static override styles = [
     workspacePanelStyles,
     css`
@@ -91,9 +94,9 @@ export class WorkspaceGitPanel extends LitElement {
 
   private renderViewToggle(): TemplateResult {
     return html`
-      <div class="view-toggle" role="group" aria-label="Changed files view">
-        ${this.renderViewToggleButton("list", "List")}
-        ${this.renderViewToggleButton("tree", "Tree")}
+      <div class="view-toggle" role="group" aria-label=t("git.changedFilesView")>
+        ${this.renderViewToggleButton("list", t("git.list"))}
+        ${this.renderViewToggleButton("tree", t("git.tree"))}
       </div>
     `;
   }
@@ -108,7 +111,7 @@ export class WorkspaceGitPanel extends LitElement {
   private renderExpandCollapseAll(expandablePaths: readonly string[]): TemplateResult {
     const allExpanded = expandablePaths.every((path) => this.expandedDirectories.has(path));
     return html`
-      <button type="button" @click=${() => { this.toggleExpandAll(expandablePaths, allExpanded); }}>${allExpanded ? "Collapse all" : "Expand all"}</button>
+      <button type="button" @click=${() => { this.toggleExpandAll(expandablePaths, allExpanded); }}>${allExpanded ? t("git.collapseAll") : t("git.expandAll")}</button>
     `;
   }
 

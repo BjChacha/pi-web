@@ -1580,19 +1580,19 @@ export class PiWebApp extends LitElement {
     const project = this.state.selectedProject;
     if (this.state.isLoadingProjects) {
       return {
-        title: "Loading projects…",
-        body: "Looking for projects you have added to PI WEB.",
+        title: t("empty.loadingProjects.title"),
+        body: t("empty.loadingProjects.body"),
       };
     }
     if (project === undefined) {
       return this.state.projects.length === 0
         ? {
-            title: "No projects yet",
-            body: "Use Actions → Add Project to add a folder. Workspace tools will appear here after you choose a workspace.",
+            title: t("empty.noProjects.title"),
+            body: t("empty.noProjects.body"),
           }
         : {
-            title: "Select a project",
-            body: "Choose a project from the sidebar, then select a workspace to inspect files, Git, or terminals.",
+            title: t("empty.selectProject.title"),
+            body: t("empty.selectProject.body"),
           };
     }
     if (this.state.isLoadingWorkspaces) {
@@ -1603,22 +1603,22 @@ export class PiWebApp extends LitElement {
     }
     if (this.state.workspaces.length === 0) {
       return {
-        title: "No workspaces found",
-        body: `${project.name} does not have any available workspaces. Try selecting the project again or re-adding it.`,
+        title: t("empty.noWorkspaces.title"),
+        body: t("empty.noWorkspaces.body", { name: project.name }),
       };
     }
     return {
-      title: "Select a workspace",
-      body: `Choose a workspace in ${project.name} to inspect files, Git, or terminals.`,
+      title: t("empty.selectWorkspace.title"),
+      body: t("empty.selectWorkspace.body", { name: project.name }),
     };
   }
 
   private sessionEmptyMessage(): string {
-    if (this.state.isLoadingProjects) return "Loading projects…";
-    if (this.state.selectedWorkspace !== undefined) return "Select or start a session.";
-    if (this.state.selectedProject !== undefined) return "Select a workspace to start a session.";
-    if (this.state.projects.length === 0) return "Add a project to start a session.";
-    return "Select a project and workspace to start a session.";
+    if (this.state.isLoadingProjects) return t("empty.loadingProjects.message");
+    if (this.state.selectedWorkspace !== undefined) return t("empty.selectSession");
+    if (this.state.selectedProject !== undefined) return t("empty.selectWorkspace.message");
+    if (this.state.projects.length === 0) return t("empty.addProject");
+    return t("empty.selectProjectAndWorkspace");
   }
 
   private mobilePanelBadge(panel: QualifiedWorkspacePanelContribution): unknown {

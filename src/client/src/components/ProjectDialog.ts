@@ -1,10 +1,13 @@
 import { LitElement, html } from "lit";
+import { t } from "../i18n";
+import { LocaleController } from "../i18n/controller";
 import { customElement, property, query, state } from "lit/decorators.js";
 import { api, type FileSuggestion } from "../api";
 import { css } from "lit";
 
 @customElement("project-dialog")
 export class ProjectDialog extends LitElement {
+  private readonly locale = new LocaleController(this);
   @property({ attribute: false }) onSubmit?: (path: string, create: boolean) => void;
   @property({ attribute: false }) onCancel?: () => void;
   @property() machineId = "local";
@@ -93,7 +96,7 @@ export class ProjectDialog extends LitElement {
         <section @click=${(event: Event) => { event.stopPropagation(); }}>
           <header>
             <strong>Add project</strong>
-            <button @click=${() => { this.onCancel?.(); }} aria-label="Close">×</button>
+            <button @click=${() => { this.onCancel?.(); }} aria-label=${t("palette.close")}>×</button>
           </header>
           <div class="body">
             <label>

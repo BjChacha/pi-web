@@ -1,4 +1,6 @@
 import { css, html, LitElement, type PropertyValues, type TemplateResult } from "lit";
+import { t } from "../i18n";
+import { LocaleController } from "../i18n/controller";
 import { customElement, property, query, state } from "lit/decorators.js";
 import type { FileContentResponse, FileTreeEntry } from "../api";
 import { workspaceImagePreviewUrl } from "../api/urls";
@@ -20,6 +22,7 @@ export interface WorkspaceUploadScope {
 
 @customElement("workspace-files-panel")
 export class WorkspaceFilesPanel extends LitElement {
+  private readonly locale = new LocaleController(this);
   @property({ attribute: false }) context: WorkspacePanelContext | undefined;
   @query("#workspace-upload-input") private uploadInput?: HTMLInputElement;
   @state() private pendingUpload: PendingWorkspaceUploadReview | undefined;
@@ -134,7 +137,7 @@ export class WorkspaceFilesPanel extends LitElement {
     });
     if (batches.length === 0) return null;
     return html`
-      <section class="upload-progress" aria-label="Workspace uploads">
+      <section class="upload-progress" aria-label=t("files.uploads")>
         <div class="upload-progress-header">
           <strong>Uploads</strong>
           <small>${uploadSummaryLabel(batches)}</small>
@@ -182,13 +185,13 @@ export class WorkspaceFilesPanel extends LitElement {
     const fileCount = review.files.length;
     return html`
       <div class="dialog-backdrop" @mousedown=${() => { this.closeUploadDialog(); }}>
-        <section class="upload-dialog" role="dialog" aria-modal="true" aria-label="Review file upload" @mousedown=${(event: MouseEvent) => { event.stopPropagation(); }} @keydown=${this.handleDialogKeyDown}>
+        <section class="upload-dialog" role="dialog" aria-modal="true" aria-label=t("files.reviewUpload") @mousedown=${(event: MouseEvent) => { event.stopPropagation(); }} @keydown=${this.handleDialogKeyDown}>
           <header>
             <div>
               <span class="eyebrow">Upload</span>
               <h2>Review ${fileCount === 1 ? "file" : `${String(fileCount)} files`}</h2>
             </div>
-            <button class="close-button" title="Cancel upload" aria-label="Cancel upload" @click=${() => { this.closeUploadDialog(); }}>×</button>
+            <button class="close-button" title=t("files.cancelUpload") aria-label=t("files.cancelUpload") @click=${() => { this.closeUploadDialog(); }}>×</button>
           </header>
           <form @submit=${(event: SubmitEvent) => { this.submitUploadReview(event, context, review); }}>
             <label>
@@ -206,8 +209,8 @@ export class WorkspaceFilesPanel extends LitElement {
                 <span>Overwrite existing files</span>
               </label>
             </div>
-            <section class="review-files" aria-label="Files to upload">
-              <strong>${fileCount === 1 ? "File" : "Files"}</strong>
+            <section class="review-files" aria-label=t("files.uploadList")>
+              <strong>${fileCount === 1 ? t("files.file") : t("files.heading")}</strong>
               ${review.files.map((file) => html`
                 <div class="review-file">
                   <span>${file.name}</span>
@@ -386,7 +389,7 @@ export function workspaceUploadBatchesForScope(batches: Record<string, Workspace
 }
 
 export function workspaceUploadReviewError(files: readonly File[], destinationFolder: string): string | undefined {
-  if (files.length === 0) return "Choose at least one file to upload.";
+  if (files.length === 0) return t("files.chooseFile");
   for (const file of files) {
     try {
       workspaceUploadPath(destinationFolder, file.name);
@@ -410,7 +413,7 @@ export function workspaceFileViewerStatusLabel(
   context: Pick<WorkspacePanelContext, "selectedFilePath" | "selectedFileContent">,
 ): string | undefined {
   const file = context.selectedFileContent;
-  if (context.selectedFilePath === undefined || context.selectedFilePath === "") return "Select a file.";
+  if (context.selectedFilePath === undefined || context.selectedFilePath === "") return t("files.selectFile");
   if (file === undefined) return `Loading ${context.selectedFilePath}…`;
   if (file.mediaType === "image") return undefined;
   if (file.binary) return `Binary file: ${file.path} · ${formatFileSize(file.size)}`;
@@ -439,7 +442,7 @@ function fileListToArray(files: FileList | null | undefined): File[] {
 }
 
 function isFileDrag(event: DragEvent): boolean {
-  return Array.from(event.dataTransfer?.types ?? []).includes("Files");
+  return Array.from(event.dataTransfer?.types ?? []).includes(t("files.heading"));
 }
 
 function uploadSummaryLabel(batches: readonly WorkspaceUploadBatchState[]): string {
@@ -460,9 +463,9 @@ function uploadBatchTitle(batch: WorkspaceUploadBatchState): string {
 
 export function uploadBatchStatusLabel(batch: WorkspaceUploadBatchState): string {
   switch (batch.status) {
-    case "completed": return "Done";
-    case "error": return "Failed";
-    case "cancelled": return "Cancelled";
+    case "completed": return t("files.done");
+    case "error": return t("files.failed");
+    case "cancelled": return t("files.cancelled");
     case "uploading": return formatPercent(batch.percent);
   }
 }
@@ -473,11 +476,11 @@ export function uploadBatchProgressValue(batch: WorkspaceUploadBatchState): numb
 
 function uploadFileStatusLabel(file: WorkspaceUploadFileState): string {
   switch (file.status) {
-    case "pending": return "Pending";
+    case "pending": return t("files.pending");
     case "uploading": return formatPercent(file.percent);
-    case "completed": return "Done";
-    case "error": return "Error";
-    case "cancelled": return "Cancelled";
+    case "completed": return t("files.done");
+    case "error": return t("files.error");
+    case "cancelled": return t("files.cancelled");
   }
 }
 
